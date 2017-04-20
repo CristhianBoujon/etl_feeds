@@ -17,6 +17,8 @@ def insert_feed(file, db_connection):
     skip_ads = 0 # Ads to skip in case that we need to "restart" the iterator
     inserted_ads = 0
 
+    info = {'status': None, 'file': file, 'inserted': None, 'e_msg': None}
+
     while True:
         try:
             event, element = next(xml_parser)
@@ -24,41 +26,50 @@ def insert_feed(file, db_connection):
             if element.tag == "ad" and skip_ads == 0:
                 cursor.execute(sql_ok, (etree.tostring(element)))
                 current_pending += 1
-                inserted_ads += 1
-                print(current_pending, "Insert", skip_ads, element[0].text)
+#                inserted_ads += 1
+#                print(current_pending, "Insert", skip_ads, element[0].text)
 
                 element.clear()
                 if( current_pending == max_pending):
                     db_connection.commit()
+                    inserted_ads += current_pending
                     current_pending = 0
             elif element.tag == "ad" and skip_ads != 0:
                 skip_ads -= 1
-                print(current_pending, "Skip", skip_ads, element[0].text)
+ #               print(current_pending, "Skip", skip_ads, element[0].text)
 
         except StopIteration:
-            break
+            db_connection.commit()
+            inserted_ads += current_pending
+            current_pending = 0
+            info['status'] = 'ok'
+            info['inserted'] = inserted_ads
+        
+            return info
 
         except etree.ParseError as e:
             # https://docs.python.org/3/library/xml.etree.elementtree.html#exceptions
             if e.code == 4 or e.code == 11: # Invalid Token or invalid entity
-                skip_ads = inserted_ads
+                skip_ads = inserted_ads + current_pending
                 current_pending = 0
-                
-                print("ERROR CODE: ", e.code, skip_ads)
-
                 cleaner.clear_file(file) # Removes invalid characters from file
                 xml_parser = etree.iterparse(file)
             else:
-                raise e
+                info['status'] = type(e).__name__
+                info['inserted'] = inserted_ads
+                info['e_msg'] = str(e)
+#                raise e
+                return info
+        except Exception as e:
+            info['status'] = type(e).__name__
+            info['inserted'] = inserted_ads
+            info['e_msg'] = str(e)
 
-    
-    db_connection.commit()
-
-    return {'ok': True, 'data': (file, 'Inserted')}
+            return info
 
 def get_urls(db_connection, order_by = None, limit = None):
     
-    sql = "SELECT feedurl FROM xzclf_feeds_in WHERE enabled LIKE '1' "
+    sql = "SELECT feedurl FROM xzclf_feeds_in WHERE enabled LIKE '1' AND feedurl LIKE '%trovit%'"
 
     if order_by:
         sql += "ORDER BY %s " % order_by
@@ -85,22 +96,56 @@ def process_feed(url, download_folder):
                                  db = db_name,
                                  charset='utf8mb4',
                                  cursorclass=pymysql.cursors.DictCursor)
+    file_name = ""
+
     try:
-        result = preprocess(download_file(url, download_folder), insert_feed, (db_connection,))
-        print( result['ok'], "\t", result['data'][0], "\t", result['data'][1])
-
+        print(1)
+        file_name = download_file(url, download_folder)
+        print(2)
+        result = preprocess(file_name, insert_feed, (db_connection,))
+        print(3)
+        db_log(db_connection, 
+            url = url, 
+            file = file_name, 
+            status = result['status'], 
+            inserted = result['inserted'],
+            e_msg = result['e_msg'])
+        print(4)
     except Exception as e:
-        sql = "INSERT INTO fp_exceptions_feeds_in (type, url, msg) VALUES ('%s', '%s', '%s')"
-    
-        with db_connection.cursor() as cursor:
-            cursor.execute( sql % (type(e).__name__, 
-                url.replace("'", "\"").replace('"','\\"'), 
-                str(e).replace("'", "\"").replace('"','\\"')))
+        db_log(db_connection, 
+            url = url, 
+            file = file_name, 
+            status = type(e).__name__, 
+            e_msg = str(e))
 
-        db_connection.commit()    
-    
-    db_connection.close()
 
+def db_log(db_connection, **kwargs):
+    field_list = ("url", "file", "status", "inserted", "e_msg")
+    value_list = []
+
+    sql = """INSERT INTO fp_feeds_in_log (%s, %s, %s, %s, %s) 
+                VALUES (%s, %s, %s, %s, %s)"""
+
+
+    for field in field_list:
+        if (field not in kwargs) or (kwargs[field] == "" or kwargs[field] == None):
+            value = "NULL"
+        
+        elif(type(kwargs[field]) == str):
+            value = db_connection.escape(kwargs[field])
+        else:
+            value = kwargs[field]
+
+        value_list.append(value)
+
+    value_list = tuple(value_list)
+
+    sql = sql % (field_list + value_list)
+    print(sql)
+    with db_connection.cursor() as cursor:
+        cursor.execute(sql)
+
+    db_connection.commit() 
 
 def run(download_folder, db_connection, num_workers = None, urls = None):
 
@@ -111,13 +156,13 @@ def run(download_folder, db_connection, num_workers = None, urls = None):
         #results = pool.map_async(process_feed, range(5)).get()
         responses = [pool.apply_async(process_feed, (url, download_folder)) for url in urls]
 
-        for res in responses:
-            res.get()
+        for response in responses:
+            response.get()
 
 if __name__ == '__main__':
 
     # Number of process to be create
-    num_workers = cpu_cpu_count() * 2
+    num_workers = cpu_count() * 2
 
     # Folder to save the feeds
     feeds_folder = "./feeds"
@@ -148,5 +193,5 @@ if __name__ == '__main__':
     
     #urls = ['http://allhouses.com.br/feeds/trovit']
     #urls = ['http://www.hispacasas.com/views/nl/admin/xml/immo_xml/trovit.xml']
-    run("./feeds", conn, num_workers = num_workers, urls = urls)
+    run("./feeds", conn, num_workers = num_workers)
 
