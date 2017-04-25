@@ -26,8 +26,6 @@ def insert_feed(file, db_connection):
             if element.tag == "ad" and skip_ads == 0:
                 cursor.execute(sql_ok, (etree.tostring(element)))
                 current_pending += 1
-#                inserted_ads += 1
-#                print(current_pending, "Insert", skip_ads, element[0].text)
 
                 element.clear()
                 if( current_pending == max_pending):
@@ -36,7 +34,6 @@ def insert_feed(file, db_connection):
                     current_pending = 0
             elif element.tag == "ad" and skip_ads != 0:
                 skip_ads -= 1
- #               print(current_pending, "Skip", skip_ads, element[0].text)
 
         except StopIteration:
             db_connection.commit()
@@ -44,7 +41,6 @@ def insert_feed(file, db_connection):
             current_pending = 0
             info['status'] = 'ok'
             info['inserted'] = inserted_ads
-        
             return info
 
         except etree.ParseError as e:
@@ -58,13 +54,11 @@ def insert_feed(file, db_connection):
                 info['status'] = type(e).__name__
                 info['inserted'] = inserted_ads
                 info['e_msg'] = str(e)
-#                raise e
                 return info
         except Exception as e:
             info['status'] = type(e).__name__
             info['inserted'] = inserted_ads
             info['e_msg'] = str(e)
-
             return info
 
 def get_urls(db_connection, order_by = None, limit = None):
@@ -99,18 +93,17 @@ def process_feed(url, download_folder):
     file_name = ""
 
     try:
-        print(1)
         file_name = download_file(url, download_folder)
-        print(2)
         result = preprocess(file_name, insert_feed, (db_connection,))
-        print(3)
-        db_log(db_connection, 
-            url = url, 
-            file = file_name, 
-            status = result['status'], 
-            inserted = result['inserted'],
-            e_msg = result['e_msg'])
-        print(4)
+        
+        for res in result:
+            db_log(db_connection, 
+                url = url, 
+                file = file_name, 
+                status = res['status'], 
+                inserted = res['inserted'],
+                e_msg = res['e_msg'])
+
     except Exception as e:
         db_log(db_connection, 
             url = url, 
@@ -125,12 +118,10 @@ def db_log(db_connection, **kwargs):
 
     sql = """INSERT INTO fp_feeds_in_log (%s, %s, %s, %s, %s) 
                 VALUES (%s, %s, %s, %s, %s)"""
-
-
+    
     for field in field_list:
         if (field not in kwargs) or (kwargs[field] == "" or kwargs[field] == None):
             value = "NULL"
-        
         elif(type(kwargs[field]) == str):
             value = db_connection.escape(kwargs[field])
         else:
@@ -138,10 +129,10 @@ def db_log(db_connection, **kwargs):
 
         value_list.append(value)
 
+    
     value_list = tuple(value_list)
-
     sql = sql % (field_list + value_list)
-    print(sql)
+
     with db_connection.cursor() as cursor:
         cursor.execute(sql)
 

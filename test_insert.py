@@ -11,5 +11,5 @@ connection = pymysql.connect(host='localhost',
                              charset='utf8mb4',
                              cursorclass=pymysql.cursors.DictCursor)
 
-run2.insert_feed("feeds/www_hispacasas_com_20170412112633440048.xml", connection)
+print(run2.insert_feed("feeds/feeds_doplim_com20170419214939764505.xml", connection))
 #run2.insert_feed("feeds/extract_casas.xml", connection)
