@@ -3,8 +3,9 @@ from sqlalchemy.orm.exc import NoResultFound, MultipleResultsFound
 from sqlalchemy.orm.session import object_session
 from sqlalchemy.sql.expression import func
 from slugify import slugify
+from db import DBSession
+from feeds_model import *
 
-from feeds_model import FeedTypeMapping
 
 class FeedMappingException(Exception):
     def __init__(self, message):
@@ -22,11 +23,13 @@ MAP_METHODS = {
 }
 
 
-class XmlFeedMapper:
+class XmlAdMapper:
 
     def __init__(self, feed_type):
-        self.feed_type = feed_type
+        self.ad = {}
 
+        self.feed_type = feed_type
+        self.db_session = DBSession()
         try:
             self.root = feed_type.mapping.filter_by(method = "ROOT").one().field
 
@@ -37,7 +40,7 @@ class XmlFeedMapper:
             raise FeedMappingException("Se ha creado más de un ROOT para el mapeo de {0}".format(feed_type.id))
 
     def iter_from_file(self, file):
-        pass
+        xml_parser = etree.iterparse(file, tag = self.root)
 
     def map(self, str_xml):
         xml = etree.fromstring(str_xml)
@@ -48,7 +51,7 @@ class XmlFeedMapper:
         Solución: https://www.sitepoint.com/quick-tip-how-to-permanently-change-sql-mode-in-mysql/
         """
         
-        methods = object_session(self.feed_type).query(
+        methods = self.db_session.query(
                     FeedTypeMapping.method, 
                     func.group_concat(FeedTypeMapping.field.op('ORDER BY')(FeedTypeMapping.param_order))
                 ).filter(FeedTypeMapping.feed_type == self.feed_type, FeedTypeMapping.field != self.root).group_by(FeedTypeMapping.method).order_by(FeedTypeMapping.param_order).all()
@@ -57,6 +60,8 @@ class XmlFeedMapper:
             self_method = MAP_METHODS[method_name]
             args = [self.extract(xml, xpath) for xpath in xpaths.split(",")]
             getattr(self, self_method)(*args)
+
+        self.db_session.commit()
 
     def extract(self, xml, xpath):
         try:
@@ -84,8 +89,84 @@ class XmlFeedMapper:
         print(args)
     
     def map_location(self, *args):
+        location_name = ",".join([slugify(arg) for arg in args])
+        try:
+            location_ids = self.db_session.query(
+                FeedInLocation.country_id.label("countryid"),
+                FeedInLocation.state_id.label("stateid"),
+                FeedInLocation.location_id.label("locationid"), 
+            ).filter_by(location_name = location_name).one()
+        
+            print(location_ids)
 
-        print(",".join([slugify(arg) for arg in args]))
+        except NoResultFound:
+            self.db_session.add(FeedInLocation(location_name = location_name))
+
 
     def map_url(self, *args):
         print(args)
+
+    def bulk_insert(self, file, feed_in):
+        xml_parser = etree.iterparse(file, tag = self.root)
+        file_was_cleaned = False # Flag determines if xml file was cleaned to avoid infite loops
+
+        max_pending = 10000 # Max INSERTs pending to commit
+        current_pending = 0   # count the number of ads processing from the xml
+        skip_ads = 0 # Ads to skip in case that we need to "restart" the iterator
+        inserted_ads = 0
+
+        info = {'status': None, 'file': file, 'inserted': None, 'e_msg': None}
+        pending_raw_ads = []
+        while True:
+            try:
+                event, element = next(xml_parser)
+
+                if skip_ads == 0:
+
+                    pending_raw_ads.append(
+                        {   "raw_ad": etree.tostring(element, encoding = "utf-8").decode("utf-8"),
+                            "feed_in_id": feed_in.id
+                        })
+
+                    current_pending += 1
+
+                    element.clear()
+                    if( current_pending == max_pending):
+                        self.db_session.execute(RawAd.__table__.insert(), pending_raw_ads)
+                        self.db_session.commit()    
+                        del pending_raw_ads[:] 
+                        inserted_ads += current_pending
+                        current_pending = 0
+                elif skip_ads != 0:
+                    skip_ads -= 1
+
+            except StopIteration:
+                if(current_pending != 0):
+                    self.db_session.execute(RawAd.__table__.insert(), pending_raw_ads)
+                    self.db_session.commit()
+                    inserted_ads += current_pending
+                    current_pending = 0
+
+                info['status'] = 'ok'
+                info['inserted'] = inserted_ads
+                
+                return info
+
+            except etree.ParseError as e:
+                # https://docs.python.org/3/library/xml.etree.elementtree.html#exceptions
+                # if there is an invalid Token OR invalid entity AND file wasn't cleaned yet
+                if (e.code == 4 or e.code == 11) and not file_was_cleaned: 
+                    skip_ads = inserted_ads + current_pending
+                    current_pending = 0
+                    cleaner.clear_file(file) # Removes invalid characters from file
+                    xml_parser = etree.iterparse(file)
+                else:
+                    info['status'] = type(e).__name__
+                    info['inserted'] = inserted_ads
+                    info['e_msg'] = str(e)
+                    return info
+            except Exception as e:
+                info['status'] = type(e).__name__
+                info['inserted'] = inserted_ads
+                info['e_msg'] = str(e)
+                return info

@@ -2,7 +2,6 @@ import sys
 import re
 import fileinput
 
-
 def clear_file(file_name):
     for line in fileinput.FileInput(file_name, inplace = True):
         clean_line = invalid_xml_remove(line)

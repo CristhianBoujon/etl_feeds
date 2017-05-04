@@ -1,26 +1,22 @@
-import pymysql
-import feeds_preprocessor as p
-import run2
-import time
+from feeds_downloader import download_file
+from feeds_preprocessor import preprocess
+from multiprocessing import Pool, cpu_count
+from tools import cleaner
+import os
+from sqlalchemy import create_engine
+from sqlalchemy.orm import scoped_session, sessionmaker
+from feeds_model import *
 
-# Database connection data
-db_host = 'localhost'
-db_user = 'root'
-db_pass = '33422516'
-db_name = 'ads'
+engine = create_engine("mysql+pymysql://root:33422516@localhost/ads?charset=utf8mb4")
+Session = scoped_session(sessionmaker(bind=engine))
+Session.configure(autoflush = False, expire_on_commit = False)
+session = Session()
+feed_in = session.query(FeedIn).filter_by(id = 205 ).one()
 
-# Connect to the database
-db_connection = pymysql.connect(host = db_host,
-                             user = db_user,
-                             password = db_pass,
-                             db = db_name,
-                             charset='utf8mb4',
-                             cursorclass=pymysql.cursors.DictCursor)
+url = feed_in.url
 
 
-start = time.time()
-#run2.run("./feeds", db_connection, urls = ['http://hotelde_std:f6e883b551@www.hotel.de/media/downloads/export/MultiLingualExport/hotelde_standard_export.zip', 'https://export.net.linio.com/ce08db27-6021-4de3-b592-9c30ac9d1f67/api/productdataexport_16?pid=29990&format=xml'])
-run2.insert_feed("feeds/export_net_linio_com_20170418162655450995.xml", db_connection)
-end = time.time()
-
-print ("Parallel process: %.2f seconds" % (end - start))
+file_name = "./feeds/fotoautos_com20170503161857563415.xml"
+result = preprocess(file_name, feed_in.bulk_insert, ())
+for res in result:
+    print( res)
