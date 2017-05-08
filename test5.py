@@ -14,10 +14,9 @@ session = Session()
 
 
 
-feed_in = session.query(FeedIn).filter_by( feedid = 491 ).one()
+feed_in = session.query(FeedIn).filter_by( id = 491 ).one()
 
-feed_in.feed_type.feed_mapper.map(
-    """
+xml = """
     <ad>
   <property_type><![CDATA[Departamento]]></property_type>
   <id><![CDATA[742t]]></id>
@@ -67,7 +66,8 @@ El baño es completo con ducha y bañera, secador de pelo, toallero electrico. R
   <is_new><![CDATA[0]]></is_new>
 </ad>
 
-    """)
+    """
+ad_mapped = feed_in.feed_type.feed_mapper.map(xml)
 
 
 print("------")
@@ -177,4 +177,11 @@ xml2 = """
 </ad>
 """
 
-feed_in.feed_type.feed_mapper.map(xml2)
+ad_mapped2 =  feed_in.feed_type.feed_mapper.map(xml2)
+
+print("---------------")
+print(ad_mapped)
+print(ad_mapped2)
+print("---------------")
+
+#print("Hola", type(feed_in.feed_type.additional_params))

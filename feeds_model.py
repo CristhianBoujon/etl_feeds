@@ -1,11 +1,9 @@
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import Column, Integer, String, ForeignKey
 from sqlalchemy.orm import sessionmaker, reconstructor, relationship
-#from feeds_mapper import *
 from sqlalchemy.orm.session import object_session
 
 Base = declarative_base()
-
 
 class FeedType(Base):
     __tablename__ = "fp_feed_types"
@@ -14,6 +12,8 @@ class FeedType(Base):
     feed_mapper_name = Column("feedmapper", String)
 
     mapping = relationship("FeedTypeMapping", lazy = 'dynamic')
+    additional_params = relationship("Param", lazy = 'dynamic')
+
     feed_in_list = relationship("FeedIn", back_populates = "feed_type")
 
     @reconstructor
@@ -62,7 +62,6 @@ class FeedTypeMapping(Base):
 
     # Mapping relationship feed_type_mapping -> feed_type
     feed_type_id = Column(String, ForeignKey("fp_feed_types.id"))
-
     feed_type = relationship("FeedType", back_populates = "mapping")
 
     def __str__(self):
@@ -76,6 +75,17 @@ class FeedTypeMapping(Base):
                                 self.param_order,
                                 self.feed_type_id)
 
+class Param(Base):
+    __tablename__ = "fp_params"
+    id = Column(Integer, primary_key = True)
+    
+    name = Column(String)
+    value = Column("val", String)
+    method = Column(String)
+
+    feed_type_id = Column(String, ForeignKey("fp_feed_types.id"))
+    feed_type = relationship("FeedType", back_populates = "additional_params")
+
 class FeedInLocation(Base):
     __tablename__ = "xzclf_feeds_in_location"
 
@@ -85,9 +95,11 @@ class FeedInLocation(Base):
     state_id = Column("stateid", Integer)
     country_id = Column("countryid", Integer)
 
+
 class RawAd(Base):
     __tablename__ = "fp_raw_ads"
 
     id = Column(Integer, primary_key = True)
     raw_ad = Column(String)
     feed_in_id = Column(Integer)
+
