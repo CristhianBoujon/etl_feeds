@@ -1,6 +1,11 @@
 import sys
 import re
 import fileinput
+import slugify as slug
+
+def slugify(string, separator = "-"):
+    return slug.slugify(string, separator = separator)
+
 
 def clear_file(file_name):
     for line in fileinput.FileInput(file_name, inplace = True):

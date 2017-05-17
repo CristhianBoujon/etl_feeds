@@ -29,7 +29,7 @@ def process_feed(_url, download_folder):
     feed_in = DBSession().query(FeedIn).filter_by(url = _url ).one()
 
     url = feed_in.url
-
+    file_name = ""    
     try:
         file_name = download_file(url, download_folder)
         result = preprocess(file_name, feed_in.bulk_insert, ())
@@ -37,7 +37,6 @@ def process_feed(_url, download_folder):
             logger.info("{0} {1} {2} {3} {4}".format(url, file_name, res['status'], res['inserted'], res['e_msg']))
     
     except Exception as e:
-        file_name = ""
         logger.info("{0} {1} {2} {3} {4}".format(url, file_name, type(e).__name__, 0, str(e)))
 
 
@@ -61,15 +60,50 @@ if __name__ == '__main__':
     feeds_folder = "./feeds"
 
     urls = [
-        'http://fotoautos.com/xml/trovit/trovit_br.xml'
-        ,'http://fotoautos.com/xml/trovit/trovit_ec.xml'
-        ,'http://fotoautos.com/xml/trovit/trovit_bo.xml'
-        ,'http://fotoautos.com/xml/trovit/trovit_co.xml'
-        ,'http://fotoautos.com/xml/trovit/trovit_mx.xml'
-        ,'http://fotoautos.com/xml/trovit/trovit_pe.xml'
-        ,'http://inmueblesenweb.com/xml-trovit/'
-    ]
+        'http://dubai.classonet.com/classonet-jobs-trovit.xml'
+        ,'http://www.avisos-chile.com/feeds/trovit/jobs/'
+        ,'http://www.avisos-colombia.com/feeds/trovit/jobs/'
+        ,'http://www.bachecalavoro.com/export/Trovit_anunico.xml'
+        ,'http://www.indads.in/feeds/trovit/jobs/'
+        ,'http://www.jobsxl.com/xml/trovit.php'
+        ,'http://www.reclutamos.com/trovit_chile-1.xml'
+        ,'http://www.tablerotrabajo.com.co/export/Trovit_anunico.xml'
+        ,'http://www.tablerotrabajo.com.mx/export/Trovit_anunico.xml'
+        ,'http://www.tablerotrabajo.com/export/Trovit_anunico.xml'
+        ,'http://www.toditolaboral.com/trovit_empleos_argentina.xml'
+        ,'http://www.toditolaboral.com/trovit_empleos_chile.xml'
+        ,'http://www.toditolaboral.com/trovit_empleos_colombia.xml'
+        ,'http://www.toditolaboral.com/trovit_empleos_ecuador.xml'
+        ,'http://www.toditolaboral.com/trovit_empleos_espana.xml'
+        ,'http://www.toditolaboral.com/trovit_empleos_mexico.xml'
+        ,'http://www.toditolaboral.com/trovit_empleos_peru.xml'
+        ,'http://www.toditolaboral.com/trovit_empleos_venezuela.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_ARG.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_AUS.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_AUT.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_BLZ.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_BRA.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_CAN.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_CHL.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_COL.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_CUB.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_ECU.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_ESP.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_HND.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_HTI.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_IND.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_MEX.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_NIC.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_PER.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_PRT.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_TTO.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_UGY.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_USA.xml'
+        ,'https://www.tiptopjob.com/joblist/TTJTrovit_VEN.xml'
 
+    ]
+    import random
+    random.shuffle(urls)
     #urls = ['http://allhouses.com.br/feeds/trovit']
     #urls = ['http://www.hispacasas.com/views/nl/admin/xml/immo_xml/trovit.xml']
     run("./feeds", num_workers = num_workers, urls = urls)

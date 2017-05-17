@@ -2,26 +2,34 @@ from lxml import etree
 from sqlalchemy.orm.exc import NoResultFound, MultipleResultsFound
 from sqlalchemy.orm.session import object_session
 from sqlalchemy.sql.expression import func
-from slugify import slugify
-from db import DBSession
+from tools.cleaner import slugify
+from db import DBSession, Session
 from feeds_model import *
-
+import os
 
 class FeedMappingException(Exception):
     def __init__(self, message):
         self.message = message
 
+    def __str__(self):
+        return self.message
+
 
 class MapMethod:
-    def __init__(self, **kwargs):
+    def __init__(self, feed_type = None, **kwargs):
+        self.feed_type = feed_type
         self.additional_args = kwargs
 
     def map(self, *args):
-        raise NotImplementedError("La función map() no está implementada para " + self.class.__name__)
+        raise NotImplementedError("La función map() no está implementada para " + type(self).__name__)
 
 class DescripcionMapMethod(MapMethod):
     def map(self, *args):
-        return {"content": self.additional_args["template"].format(*args)}
+        try:
+            return {"addesc": self.additional_args["template"].format(*args)}
+        except KeyError:
+            msg = "El parámetro 'template' no se encuentra definido para " + self.feed_type.id
+            raise FeedMappingException( msg )
 
 class TitleMapMethod(MapMethod):
     def map(self, *args):
@@ -29,34 +37,70 @@ class TitleMapMethod(MapMethod):
 
 class UrlMapMethod(MapMethod):
     def map(self, *args):
-        return args[0]
+        return {'url': args[0]}
 
 class LocationMapMethod(MapMethod):
     def map(self, *args):
-        location_name = ",".join([slugify(arg) for arg in args])
-        query = location_ids = DBSession.query(
-                FeedInLocation.country_id,
-                FeedInLocation.state_id,
-                FeedInLocation.location_id, 
-            ).filter_by(location_name = location_name)
 
+        slug_location_name = ",".join([slugify(arg, separator = "-") for arg in args if arg])
+        session = Session()
+        query = session.query(FeedInLocation).filter_by(slug_location_name = slug_location_name)
+        
         try:
-            location_ids = query.one()
-
-        except NoResultFound:
-            self.db_session.add(FeedInLocation(location_name = location_name))
-            location_ids = (None, None, None)
+            feed_in_location = query.one()
+            result = self.__result(feed_in_location)
+        except NoResultFound:            
+            feed_in_location = FeedInLocation(slug_location_name = slug_location_name)
+            session.add(feed_in_location)
+            session.commit()
+            result = self.__result(feed_in_location)
 
         except MultipleResultsFound:
-            location_ids = query.first()
+            feed_in_location = query.first()
+            result = self.__result(feed_in_location)
+        finally:
+            session.close()
 
-        # Set mapped location ids
-        return dict(zip(("countryid", "stateid", "locationid"), location_ids))
+        return result
 
-# @TODO: Talk with Fernando
+    def __result(self, feed_in_location):
+        return {
+            "countryid": feed_in_location.country_id, 
+            "stateid": feed_in_location.state_id, 
+            "location_name": feed_in_location.location_name,
+            "feed_in_location_id": feed_in_location.id # If feed_in_location is pending yet we return the FeedInLocation instance 
+                                                                # sinse we will update ad later when moderator fill the location data 
+        }
+
 class SubCategoryMapMethod(MapMethod):
     def map(self, *args):
-        pass
+        slug_subcat_name = ",".join([slugify(arg) for arg in args if arg])
+        session = Session()
+        query = session.query(FeedInSubcategory).filter_by(slug_subcat_name = slug_subcat_name)
+        
+        try:
+            feed_in_subcat = query.one()
+            result = self.__result(feed_in_subcat)
+        except NoResultFound:
+            feed_in_subcat = FeedInSubcategory(slug_subcat_name = slug_subcat_name)
+            session.add(feed_in_subcat)
+            session.commit()
+            result = self.__result(feed_in_subcat)
+
+        except MultipleResultsFound:
+            feed_in_subcat = query.first()
+            result = self.__result(feed_in_subcat)
+        finally:
+            session.close()
+
+        return result
+
+    def __result(self, feed_in_subcat):
+        return {
+            "subcatid": feed_in_subcat.subcategory_id, # subcatid that matches with slug_subcat_name
+            "feed_in_subcat_id": feed_in_subcat.id # If feed_in_subcats is pending yet we return the FeedInLocation instance 
+                                                                # sinse we will update ad later when moderator fill the location data 
+        }
 
 class PriceMapMethod(MapMethod):
     def map(self, *args):
@@ -69,22 +113,31 @@ class PriceMapMethod(MapMethod):
 
         return {"price": price}
 
+
+class CurrencyMapMethod(MapMethod):
+    def map(self, *args):
+        return {"currency": args[0]}
+
+class IdMapMethod(MapMethod):
+    def map(self, *args):
+        return {"site_id": args[0]}
+
 MAP_METHODS = {
-    'DESCRIPCION': "map_description",
-    'CATEGORIA': "map_category",
-    'ID': "map_id",
-    'MONEDA': "map_currency",
-    'PRECIO': "map_price",
-    'TITULO': "map_title",
-    'UBICACION': "map_location",
-    'URL': "map_url"    
+    'DESCRIPCION': DescripcionMapMethod,
+    'CATEGORIA': SubCategoryMapMethod,
+    'ID': IdMapMethod,
+    'MONEDA': CurrencyMapMethod,
+    'PRECIO': PriceMapMethod,
+    'TITULO': TitleMapMethod,
+    'UBICACION': LocationMapMethod,
+    'URL': UrlMapMethod    
 }
 
 
 class XmlAdMapper:
 
     def __init__(self, feed_type):
-
+        self.map_methods = {}
         self.feed_type = feed_type
         self.db_session = DBSession()
         try:
@@ -99,37 +152,52 @@ class XmlAdMapper:
     def iter_from_file(self, file):
         xml_parser = etree.iterparse(file, tag = self.root)
 
-    def map(self, str_xml):
-        xml = etree.fromstring(str_xml)
-        ad = dict.fromkeys([
-            "locationid",
-            "stateid",
-            "countryid",
-            "adtitle",
-            "content"], None)
+    def __load_methods(self):
+        """ Loads in memory all map methods and it params"""
 
-        """
-        @WARNING: Para que funcione ésta query, es necesario que esté 
-        desactivada la opción ONLY_FULL_GROUP_BY de mysql activada como default a partir de la versión 5.7.5
-        Información técnica: https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sqlmode_only_full_group_by
-        Solución: https://www.sitepoint.com/quick-tip-how-to-permanently-change-sql-mode-in-mysql/
-        """
+
+        
+        # @WARNING: Para que funcione ésta query, es necesario que esté 
+        # desactivada la opción ONLY_FULL_GROUP_BY de mysql activada como default a partir de la versión 5.7.5
+        # Información técnica: https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sqlmode_only_full_group_by
+        # Solución: https://www.sitepoint.com/quick-tip-how-to-permanently-change-sql-mode-in-mysql/
         methods = self.db_session.query(
                     FeedTypeMapping.method, 
                     func.group_concat(FeedTypeMapping.field.op('ORDER BY')(FeedTypeMapping.param_order))
                 ).filter(FeedTypeMapping.feed_type == self.feed_type, FeedTypeMapping.field != self.root).group_by(FeedTypeMapping.method).all()
 
         for method_name, xpaths in methods:
-            self_method = MAP_METHODS[method_name]
-            args = [self.extract(xml, xpath) for xpath in xpaths.split(",")]
             addional_params = dict([(param.name, param.value) for param in self.feed_type.additional_params.filter_by(method = method_name)])
-            result = getattr(self, self_method)(*args, **addional_params)
+            
+            map_method = MAP_METHODS[method_name](feed_type = self.feed_type, **addional_params)
 
-            ad.update(result)
+            # With the below line we get
+            # {"DESCRIPCION": (DescriptionMapMethod(template = "..."), [content/text(), bathrooms/text()])}
+            self.map_methods[method_name] = (map_method, xpaths.split(","))
 
-        self.db_session.commit()
+        return self
 
-        return ad
+    def map(self, str_xml):
+
+        if not self.map_methods:
+#            print(os.getpid(), DBSession(), self.feed_type, self.feed_type.id)
+            self.__load_methods()
+#        else:
+#            print("--", os.getpid(), DBSession(), self.feed_type, self.feed_type.id)        
+
+        xml = etree.fromstring(str_xml)
+
+        mapped_properties = {}
+        temp_ad = TempAd()
+        
+        for method_name, (map_method, xpaths) in self.map_methods.items():
+            args = [self.extract(xml, xpath) for xpath in xpaths]
+            
+            mapped_properties.update(map_method.map(*args))
+
+        temp_ad.set_properties(mapped_properties)
+
+        return temp_ad
 
     def extract(self, xml, xpath):
         """ Extract data from xml based on it xpath """
@@ -138,58 +206,6 @@ class XmlAdMapper:
         except: # If xpath doesn't match elements
             data = ""
         return data
-
-    def map_description(self, *args, **kwargs):
-        return {"content": kwargs["template"].format(*args)}
-
-    def map_category(self, *args, **kwargs):
-        return {}
-
-    def map_id(self, *args, **kwargs):
-        return {}
-    
-    def map_currency(self, *args, **kwargs):
-        return {}
-    
-    def map_price(self, *args, **kwargs):
-        if type(args[0]) == str and args[0] == "":
-            price = 0  
-        elif type(args[0]) == str:
-            price = float(args[0].replace(",", "."))
-        else:
-            price = float(args[0])
-
-        return {"price": price}
-    
-    def map_title(self, *args, **kwargs):
-        return {"adtitle": ", ".join(args)}
-    
-    def map_location(self, *args, **kwargs):
-        location_name = ",".join([slugify(arg) for arg in args])
-        query = location_ids = self.db_session.query(
-                FeedInLocation.country_id,
-                FeedInLocation.state_id,
-                FeedInLocation.location_id, 
-            ).filter_by(location_name = location_name)
-
-        try:
-            location_ids = query.one()
-
-        except NoResultFound:
-            self.db_session.add(FeedInLocation(location_name = location_name))
-            location_ids = (None, None, None)
-
-        except MultipleResultsFound:
-            location_ids = query.first()
-
-        # Set mapped location ids
-        return dict(zip(("countryid", "stateid", "locationid"), location_ids))
-        
-        
-
-    def map_url(self, *args, **kwargs):
-        return {'url': args[0]}
-
 
     def bulk_insert(self, file, feed_in):
         xml_parser = etree.iterparse(file, tag = self.root)
@@ -222,6 +238,7 @@ class XmlAdMapper:
                         del pending_raw_ads[:] 
                         inserted_ads += current_pending
                         current_pending = 0
+
                 elif skip_ads != 0:
                     skip_ads -= 1
 
@@ -242,7 +259,7 @@ class XmlAdMapper:
                 # if there is an invalid Token OR invalid entity AND file wasn't cleaned yet
                 if (e.code == 4 or e.code == 11) and not file_was_cleaned: 
                     skip_ads = inserted_ads + current_pending
-                    current_pending = 0
+                    #current_pending = 0
                     cleaner.clear_file(file) # Removes invalid characters from file
                     xml_parser = etree.iterparse(file)
                 else:
