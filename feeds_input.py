@@ -34,11 +34,24 @@ def process_feed(_url, download_folder):
         file_name = download_file(url, download_folder)
         result = preprocess(file_name, feed_in.bulk_insert, ())
         for res in result:
-            logger.info("{0} {1} {2} {3} {4}".format(url, file_name, res['status'], res['inserted'], res['e_msg']))
+            logger.info("{0} {1} {2} {3} {4} {5} {6}"
+                .format(
+                    url, 
+                    file_name, 
+                    res['status'], 
+                    res['inserted'], 
+                    res['old_ads'],
+                    res['repeated_ads'],
+                    res['e_msg']))
     
     except Exception as e:
-        logger.info("{0} {1} {2} {3} {4}".format(url, file_name, type(e).__name__, 0, str(e)))
-
+        logger.info("{0} {1} {2} {3} {4} {5} {6}"
+            .format(
+                url, 
+                file_name, 
+                type(e).__name__, 
+                0, 0, 0,
+                str(e)))
 
 
 

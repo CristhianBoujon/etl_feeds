@@ -4,6 +4,8 @@ from sqlalchemy.orm import sessionmaker, reconstructor, relationship
 from sqlalchemy.orm.session import object_session
 from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.orm.collections import attribute_mapped_collection
+from db import DBSession
+from datetime import datetime as dtt
 
 Base = declarative_base()
 
@@ -11,7 +13,7 @@ class FeedType(Base):
     __tablename__ = "fp_feed_types"
 
     id = Column(String, primary_key = True)
-    feed_mapper_name = Column("feedmapper", String)
+    ad_mapper_name = Column("feedmapper", String)
 
     mapping = relationship("FeedTypeMapping", lazy = 'dynamic')
     additional_params = relationship("Param", lazy = 'dynamic')
@@ -24,14 +26,14 @@ class FeedType(Base):
         self.__init__()
 
     def __init__(self):
-        self.feed_mapper = getattr(__import__("feeds_mapper"), self.feed_mapper_name)(self)
+        self.ad_mapper = getattr(__import__("feeds_mapper"), self.ad_mapper_name)(self)
 
 
     def bulk_insert(self, file, feed_in):
-        return self.feed_mapper.bulk_insert(file, feed_in)
+        return self.ad_mapper.bulk_insert(file, feed_in)
 
     def map_ad(self, raw_content):
-        return self.feed_mapper.map(raw_content)
+        return self.ad_mapper.map(raw_content)
 
 class FeedIn(Base):
     """ 
@@ -44,15 +46,96 @@ class FeedIn(Base):
     id = Column("feedid", Integer, primary_key = True)
     url = Column("feedurl", String)
     name  = Column("feedname", String)
-    countryid  = Column(Integer)
-    feedlastid = Column(String)
+    country_id  = Column("countryid", Integer)
     feed_type_id = Column(String, ForeignKey("fp_feed_types.id"))
 
     feed_type = relationship("FeedType", back_populates = "feed_in_list")
 
     def bulk_insert(self, file):
-        # @TODO: Is it good aproach?
-        return self.feed_type.bulk_insert(file, self)
+        """ Bulk insert from a file """
+        
+        self.feed_type.ad_mapper.iter_from_file(file)
+
+        max_pending = 10000 # Max INSERTs pending to commit
+        current_pending = 0   # count the number of ads processing from the xml
+        inserted_ads = 0
+
+        info = {'status': None, 'file': file, 'inserted': None, 'e_msg': None}
+        pending_raw_ads = []
+        record_ids = []
+        old_ads = 0
+        repeated_ads = 0
+        while True:
+            try:
+                raw_content = self.feed_type.ad_mapper.get_raw_content()
+
+                ######################## Begin - Filter section ################################
+                # @TODO: Filters should be dinamic. E.g: implement some kind of observer pattern
+                date_info = self.feed_type.ad_mapper.exec_method("FECHA", raw_content)
+                days = (dtt.today() - dtt.strptime(date_info["date"], date_info["_format"])).days                
+                ######################## End - Filter section ################################
+
+
+                if days > 30:
+                    old_ads += 1
+                    continue # It skips the remaining code in the loop. 
+                             # This way we don't call to database in each iteration 
+
+
+                ######################## Begin - Filter section ################################
+                # @TODO: Filters should be dinamic. E.g: implement some kind of observer pattern
+                record_id = str(self.id) + self.feed_type.ad_mapper.exec_method("ID", raw_content)["site_id"]
+                ad_exists = DBSession.execute("SELECT 1 FROM fp_feeds_in_records WHERE id = :id", {"id": record_id}).first()
+                ######################## End - Filter section ################################
+                if ad_exists:
+                    repeated_ads += 1
+                else:
+                    pending_raw_ads.append(
+                        {
+                            "raw_ad": raw_content,
+                            "feed_in_id": self.id
+                        })
+
+                    record_ids.append({"id": record_id})
+
+                    current_pending += 1
+                    
+                    if( current_pending == max_pending):
+                        self.__insert(pending_raw_ads, record_ids)
+
+                        inserted_ads += current_pending
+                        current_pending = 0
+
+            except StopIteration:
+                if(current_pending != 0):
+                    self.__insert(pending_raw_ads, record_ids)
+                    
+                    inserted_ads += current_pending
+                    current_pending = 0
+
+                info['status'] = 'ok'
+                info['inserted'] = inserted_ads
+                info['repeated_ads'] = repeated_ads
+                info['old_ads'] = old_ads
+
+                return info
+
+            except Exception as e:
+                info['status'] = type(e).__name__
+                info['inserted'] = inserted_ads
+                info['e_msg'] = str(e)
+                info['repeated_ads'] = repeated_ads
+                info['old_ads'] = old_ads
+
+                return info
+
+    def __insert(self, pending_raw_ads, record_ids):
+        DBSession.execute(RawAd.__table__.insert(), pending_raw_ads)
+        DBSession.execute("INSERT INTO fp_feeds_in_records (id) VALUES (:id)", record_ids)        
+        DBSession.commit()    
+        del pending_raw_ads[:] 
+        del record_ids[:] 
+
 
 class FeedTypeMapping(Base):
     __tablename__ = "fp_feed_type_mappings"
@@ -142,19 +225,14 @@ class TempAd(Base):
     def set_properties(self, dict_properties):
         """ Set properties based on a dictionary """
 
-        
-        # If location can't be mapped because FeedInLocation does not exist
-        # Or FeedInLocation.location_id, FeedInLocation.state_id and FeedInLocation.country_id
-        # does not revised by moderator yet  
-        self.feed_in_location = dict_properties.pop("feed_in_location", None)
-        self.feed_in_location_id = dict_properties.pop("feed_in_location_id", None)
-        
-        # If subcat can't be mepped because FeedInSubcategory does not exist
-        # Or it does not revised by moderator yet  
-        self.feed_in_subcat_id = dict_properties.pop("feed_in_subcat_id", None)
-
         for name, value in dict_properties.items():
-            self.properties[name] = TempAdProperty(name, value)
+
+            if name.startswith("_") and hasattr(self, name[1:]):
+                setattr(self, name[1:], value)
+            elif name.startswith("_") and not hasattr(self, name[1:]):
+                continue
+            else:
+                self.properties[name] = TempAdProperty(name, value)
 
     @classmethod
     def with_characteristic(self, name, value):
@@ -173,6 +251,6 @@ class RawAd(Base):
 
     def map(self):
         temp_ad = self.feed_in.feed_type.map_ad(self.raw_ad)
-        self.status = "M"
+        self.status = "M" # Mapped
 
         return temp_ad

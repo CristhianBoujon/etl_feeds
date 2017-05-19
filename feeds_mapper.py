@@ -2,10 +2,12 @@ from lxml import etree
 from sqlalchemy.orm.exc import NoResultFound, MultipleResultsFound
 from sqlalchemy.orm.session import object_session
 from sqlalchemy.sql.expression import func
-from tools.cleaner import slugify
+from tools.cleaner import slugify, clear_file
 from db import DBSession, Session
 from feeds_model import *
+from datetime import datetime as dtt
 import os
+import re
 
 class FeedMappingException(Exception):
     def __init__(self, message):
@@ -14,6 +16,12 @@ class FeedMappingException(Exception):
     def __str__(self):
         return self.message
 
+class FeedParseException(Exception):
+    def __init__(self, message):
+        self.message = message
+
+    def __str__(self):
+        return self.message
 
 class MapMethod:
     def __init__(self, feed_type = None, **kwargs):
@@ -23,7 +31,7 @@ class MapMethod:
     def map(self, *args):
         raise NotImplementedError("La función map() no está implementada para " + type(self).__name__)
 
-class DescripcionMapMethod(MapMethod):
+class DescriptionMapMethod(MapMethod):
     def map(self, *args):
         try:
             return {"addesc": self.additional_args["template"].format(*args)}
@@ -68,8 +76,8 @@ class LocationMapMethod(MapMethod):
             "countryid": feed_in_location.country_id, 
             "stateid": feed_in_location.state_id, 
             "location_name": feed_in_location.location_name,
-            "feed_in_location_id": feed_in_location.id # If feed_in_location is pending yet we return the FeedInLocation instance 
-                                                                # sinse we will update ad later when moderator fill the location data 
+            "_feed_in_location_id": feed_in_location.id # If feed_in_location is pending yet we return the FeedInLocation instance 
+                                                        # sinse we will update ad later when moderator fill the location data 
         }
 
 class SubCategoryMapMethod(MapMethod):
@@ -98,7 +106,7 @@ class SubCategoryMapMethod(MapMethod):
     def __result(self, feed_in_subcat):
         return {
             "subcatid": feed_in_subcat.subcategory_id, # subcatid that matches with slug_subcat_name
-            "feed_in_subcat_id": feed_in_subcat.id # If feed_in_subcats is pending yet we return the FeedInLocation instance 
+            "_feed_in_subcat_id": feed_in_subcat.id # If feed_in_subcats is pending yet we return the FeedInLocation instance 
                                                                 # sinse we will update ad later when moderator fill the location data 
         }
 
@@ -122,19 +130,44 @@ class IdMapMethod(MapMethod):
     def map(self, *args):
         return {"site_id": args[0]}
 
+class DateMapMethod(MapMethod):
+    def map(self, *args):
+        # Date or datetime as string type
+        str_input_date = args[0]
+
+        # if it contains time, we remove it
+        str_input_date = re.sub('(\d{2}:\d{2}:\d{2})', '', str_input_date).strip() 
+
+        date = dtt.strptime(str_input_date, self.additional_args["input_format"]).date()
+        str_output_date = date.strftime(self.additional_args["output_format"])
+
+        return {"date": str_output_date, "_format": self.additional_args["output_format"]}
+
 MAP_METHODS = {
-    'DESCRIPCION': DescripcionMapMethod,
+    'DESCRIPCION': DescriptionMapMethod,
     'CATEGORIA': SubCategoryMapMethod,
     'ID': IdMapMethod,
     'MONEDA': CurrencyMapMethod,
     'PRECIO': PriceMapMethod,
     'TITULO': TitleMapMethod,
     'UBICACION': LocationMapMethod,
-    'URL': UrlMapMethod    
+    'URL': UrlMapMethod,
+    'FECHA': DateMapMethod
 }
 
+class AdMapper:
+    def map(self, raw_ad):
+        raise NotImplementedError("El método map() no está implementado para " + type(self).__name__)        
+    def iter_from_file(self, file):
+        """ returns a iterator from file """
+        raise NotImplementedError("El método iter_from_file() no está implementado para " + type(self).__name__)
 
-class XmlAdMapper:
+    def get_raw_content(self):
+        """ Must returns a string with a ad information in a specific format format. Eg: json, xml, csv, etc """
+        raise NotImplementedError("El método get_raw_content() no está implementado para " + type(self).__name__)
+
+
+class XmlAdMapper(AdMapper):
 
     def __init__(self, feed_type):
         self.map_methods = {}
@@ -150,13 +183,49 @@ class XmlAdMapper:
             raise FeedMappingException("Se ha creado más de un ROOT para el mapeo de {0}".format(feed_type.id))
 
     def iter_from_file(self, file):
-        xml_parser = etree.iterparse(file, tag = self.root)
+        self.__file_path = file
+        self.__iteration_count = 0
+        self.__file_was_cleaned = False # Flag determines if xml file was cleaned to avoid infite loops
+        self.__xml_parser = etree.iterparse(self.__file_path, tag = self.root)
 
-    def __load_methods(self):
+    def get_raw_content(self):
+        """ Returns a string with a ad information in xml format """
+
+        """
+            How does it works?
+            Function iterate over each element next(self.__xml_parser). If a XML syntax error was found
+            it will raise a XMLSyntaxError exception. If the file was not cleaned yet (self.__file_was_cleaned is False)
+            we will try clean it/fix it calling clear_file().
+            After then we restart the iterator and jump the elements thas has been returned and call get_raw_content again.
+            If XMLSyntaxError is raised again (self.__file_was_cleaned is True) means that clear_file() couldn't fix it 
+            so raise the excepcion and avoid infinite recursion
+        """
+        try:
+            event, element = next(self.__xml_parser)
+            raw_content = etree.tostring(element, encoding = "utf-8").decode("utf-8")
+            element.clear()
+            
+            self.__iteration_count += 1
+
+            return raw_content
+        except etree.XMLSyntaxError as e:
+            # if there is an invalid Token OR invalid entity AND file wasn't cleaned yet
+            if not self.__file_was_cleaned: 
+                clear_file(self.__file_path) # Removes invalid characters from file
+                self.__file_was_cleaned = True
+                self.__xml_parser = etree.iterparse(self.__file_path, tag = self.root) # Restart iterator
+                # Jump elements self.__iteration_count times
+                for i in range(self.__iteration_count):
+                    next(self.__xml_parser)
+
+                return self.get_raw_content()
+            else:
+                raise FeedParseException("El XML no se pudo reparar. " + type(e).__name__ + str(e))
+
+
+    def __load_map_methods(self):
         """ Loads in memory all map methods and it params"""
-
-
-        
+  
         # @WARNING: Para que funcione ésta query, es necesario que esté 
         # desactivada la opción ONLY_FULL_GROUP_BY de mysql activada como default a partir de la versión 5.7.5
         # Información técnica: https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sqlmode_only_full_group_by
@@ -164,7 +233,7 @@ class XmlAdMapper:
         methods = self.db_session.query(
                     FeedTypeMapping.method, 
                     func.group_concat(FeedTypeMapping.field.op('ORDER BY')(FeedTypeMapping.param_order))
-                ).filter(FeedTypeMapping.feed_type == self.feed_type, FeedTypeMapping.field != self.root).group_by(FeedTypeMapping.method).all()
+                ).filter(FeedTypeMapping.feed_type == self.feed_type, FeedTypeMapping.method.in_(MAP_METHODS.keys())).group_by(FeedTypeMapping.method).all()
 
         for method_name, xpaths in methods:
             addional_params = dict([(param.name, param.value) for param in self.feed_type.additional_params.filter_by(method = method_name)])
@@ -177,15 +246,12 @@ class XmlAdMapper:
 
         return self
 
-    def map(self, str_xml):
+    def map(self, raw_content):
 
         if not self.map_methods:
-#            print(os.getpid(), DBSession(), self.feed_type, self.feed_type.id)
-            self.__load_methods()
-#        else:
-#            print("--", os.getpid(), DBSession(), self.feed_type, self.feed_type.id)        
+            self.__load_map_methods()
 
-        xml = etree.fromstring(str_xml)
+        xml = etree.fromstring(raw_content)
 
         mapped_properties = {}
         temp_ad = TempAd()
@@ -199,6 +265,18 @@ class XmlAdMapper:
 
         return temp_ad
 
+    def exec_method(self, method_name, raw_content):
+        if not self.map_methods:
+            self.__load_map_methods()
+
+        xml = etree.fromstring(raw_content)
+        map_method = self.map_methods[method_name][0]
+        xpaths = self.map_methods[method_name][1]
+
+        args = [self.extract(xml, xpath) for xpath in xpaths]
+        
+        return map_method.map(*args)
+
     def extract(self, xml, xpath):
         """ Extract data from xml based on it xpath """
         try:
@@ -206,69 +284,3 @@ class XmlAdMapper:
         except: # If xpath doesn't match elements
             data = ""
         return data
-
-    def bulk_insert(self, file, feed_in):
-        xml_parser = etree.iterparse(file, tag = self.root)
-        file_was_cleaned = False # Flag determines if xml file was cleaned to avoid infite loops
-
-        max_pending = 10000 # Max INSERTs pending to commit
-        current_pending = 0   # count the number of ads processing from the xml
-        skip_ads = 0 # Ads to skip in case that we need to "restart" the iterator
-        inserted_ads = 0
-
-        info = {'status': None, 'file': file, 'inserted': None, 'e_msg': None}
-        pending_raw_ads = []
-        while True:
-            try:
-                event, element = next(xml_parser)
-
-                if skip_ads == 0:
-
-                    pending_raw_ads.append(
-                        {   "raw_ad": etree.tostring(element, encoding = "utf-8").decode("utf-8"),
-                            "feed_in_id": feed_in.id
-                        })
-
-                    current_pending += 1
-
-                    element.clear()
-                    if( current_pending == max_pending):
-                        self.db_session.execute(RawAd.__table__.insert(), pending_raw_ads)
-                        self.db_session.commit()    
-                        del pending_raw_ads[:] 
-                        inserted_ads += current_pending
-                        current_pending = 0
-
-                elif skip_ads != 0:
-                    skip_ads -= 1
-
-            except StopIteration:
-                if(current_pending != 0):
-                    self.db_session.execute(RawAd.__table__.insert(), pending_raw_ads)
-                    self.db_session.commit()
-                    inserted_ads += current_pending
-                    current_pending = 0
-
-                info['status'] = 'ok'
-                info['inserted'] = inserted_ads
-                
-                return info
-
-            except etree.ParseError as e:
-                # https://docs.python.org/3/library/xml.etree.elementtree.html#exceptions
-                # if there is an invalid Token OR invalid entity AND file wasn't cleaned yet
-                if (e.code == 4 or e.code == 11) and not file_was_cleaned: 
-                    skip_ads = inserted_ads + current_pending
-                    #current_pending = 0
-                    cleaner.clear_file(file) # Removes invalid characters from file
-                    xml_parser = etree.iterparse(file)
-                else:
-                    info['status'] = type(e).__name__
-                    info['inserted'] = inserted_ads
-                    info['e_msg'] = str(e)
-                    return info
-            except Exception as e:
-                info['status'] = type(e).__name__
-                info['inserted'] = inserted_ads
-                info['e_msg'] = str(e)
-                return info
