@@ -24,31 +24,31 @@ class FeedParseException(Exception):
         return self.message
 
 class MapMethod:
-    def __init__(self, feed_type = None, **kwargs):
-        self.feed_type = feed_type
+    def __init__(self, **kwargs):
         self.additional_args = kwargs
 
-    def map(self, *args):
+    def map(self, *args, **kwargs):
         raise NotImplementedError("La función map() no está implementada para " + type(self).__name__)
 
 class DescriptionMapMethod(MapMethod):
-    def map(self, *args):
+    def map(self, *args, **kwargs):
         try:
             return {"addesc": self.additional_args["template"].format(*args)}
         except KeyError:
-            msg = "El parámetro 'template' no se encuentra definido para " + self.feed_type.id
+            type_id = kwargs["raw_ad"].feed_in.feed_type.id if kwargs.get("raw_ad", None) else ""
+            msg = "El parámetro 'template' no se encuentra definido para " + type_id
             raise FeedMappingException( msg )
 
 class TitleMapMethod(MapMethod):
-    def map(self, *args):
+    def map(self, *args, **kwargs):
         return {"adtitle": ", ".join(args)}
 
 class UrlMapMethod(MapMethod):
-    def map(self, *args):
+    def map(self, *args, **kwargs):
         return {'url': args[0]}
 
 class LocationMapMethod(MapMethod):
-    def map(self, *args):
+    def map(self, *args, **kwargs):
 
         slug_location_name = ",".join([slugify(arg, separator = "-") for arg in args if arg])
         session = Session()
@@ -57,8 +57,9 @@ class LocationMapMethod(MapMethod):
         try:
             feed_in_location = query.one()
             result = self.__result(feed_in_location)
-        except NoResultFound:            
-            feed_in_location = FeedInLocation(slug_location_name = slug_location_name)
+        except NoResultFound:
+            country_id = kwargs["raw_ad"].feed_in.country_id if kwargs.get("raw_ad", None) else 0
+            feed_in_location = FeedInLocation(slug_location_name = slug_location_name, country_id = country_id)
             session.add(feed_in_location)
             session.commit()
             result = self.__result(feed_in_location)
@@ -73,15 +74,14 @@ class LocationMapMethod(MapMethod):
 
     def __result(self, feed_in_location):
         return {
-            "countryid": feed_in_location.country_id, 
-            "stateid": feed_in_location.state_id, 
-            "location_name": feed_in_location.location_name,
+            "cityid": feed_in_location.state_id, 
+            "area": feed_in_location.location_name,
             "_feed_in_location_id": feed_in_location.id # If feed_in_location is pending yet we return the FeedInLocation instance 
                                                         # sinse we will update ad later when moderator fill the location data 
         }
 
 class SubCategoryMapMethod(MapMethod):
-    def map(self, *args):
+    def map(self, *args, **kwargs):
         slug_subcat_name = ",".join([slugify(arg) for arg in args if arg])
         session = Session()
         query = session.query(FeedInSubcategory).filter_by(slug_subcat_name = slug_subcat_name)
@@ -111,7 +111,7 @@ class SubCategoryMapMethod(MapMethod):
         }
 
 class PriceMapMethod(MapMethod):
-    def map(self, *args):
+    def map(self, *args, **kwargs):
         if type(args[0]) == str and args[0] == "":
             price = 0  
         elif type(args[0]) == str:
@@ -123,20 +123,25 @@ class PriceMapMethod(MapMethod):
 
 
 class CurrencyMapMethod(MapMethod):
-    def map(self, *args):
+    def map(self, *args, **kwargs):
         return {"currency": args[0]}
 
 class IdMapMethod(MapMethod):
-    def map(self, *args):
+    def map(self, *args, **kwargs):
         return {"site_id": args[0]}
 
 class DateMapMethod(MapMethod):
-    def map(self, *args):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # we create a regex patter in order to match time sinse sometimes dates contains time data
+        self.time_regex = re.compile('(\d{2}:\d{2}:\d{2})')
+
+    def map(self, *args, **kwargs):
         # Date or datetime as string type
         str_input_date = args[0]
 
         # if it contains time, we remove it
-        str_input_date = re.sub('(\d{2}:\d{2}:\d{2})', '', str_input_date).strip() 
+        str_input_date = self.time_regex.sub('', str_input_date).strip() 
 
         date = dtt.strptime(str_input_date, self.additional_args["input_format"]).date()
         str_output_date = date.strftime(self.additional_args["output_format"])
@@ -238,7 +243,7 @@ class XmlAdMapper(AdMapper):
         for method_name, xpaths in methods:
             addional_params = dict([(param.name, param.value) for param in self.feed_type.additional_params.filter_by(method = method_name)])
             
-            map_method = MAP_METHODS[method_name](feed_type = self.feed_type, **addional_params)
+            map_method = MAP_METHODS[method_name](**addional_params)
 
             # With the below line we get
             # {"DESCRIPCION": (DescriptionMapMethod(template = "..."), [content/text(), bathrooms/text()])}
@@ -246,12 +251,12 @@ class XmlAdMapper(AdMapper):
 
         return self
 
-    def map(self, raw_content):
+    def map(self, raw_ad):
 
         if not self.map_methods:
             self.__load_map_methods()
 
-        xml = etree.fromstring(raw_content)
+        xml = etree.fromstring(raw_ad.raw_content)
 
         mapped_properties = {}
         temp_ad = TempAd()
@@ -259,7 +264,7 @@ class XmlAdMapper(AdMapper):
         for method_name, (map_method, xpaths) in self.map_methods.items():
             args = [self.extract(xml, xpath) for xpath in xpaths]
             
-            mapped_properties.update(map_method.map(*args))
+            mapped_properties.update(map_method.map(*args, raw_ad = raw_ad))
 
         temp_ad.set_properties(mapped_properties)
 

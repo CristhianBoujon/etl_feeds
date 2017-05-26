@@ -243,14 +243,15 @@ class RawAd(Base):
     __tablename__ = "fp_raw_ads"
 
     id = Column(Integer, primary_key = True)
-    raw_ad = Column(String)
+    raw_content = Column("raw_ad", String)
     feed_in_id = Column(Integer, ForeignKey("xzclf_feeds_in.feedid"))
+
     status = Column(String)
 
     feed_in = relationship("FeedIn")
 
     def map(self):
-        temp_ad = self.feed_in.feed_type.map_ad(self.raw_ad)
+        temp_ad = self.feed_in.feed_type.map_ad(self)
         self.status = "M" # Mapped
 
         return temp_ad

@@ -64,8 +64,7 @@ def create_temp_ad(raw_ad_ids):
 def run(num_workers = None):
     pool = Pool(processes = num_workers)
     raw_ads = []
-#    last_id = 0
-    last_id = 616712
+    last_id = 0
     max_size = 10000
     chunk_size = 1000
     processed = 0
@@ -78,7 +77,7 @@ def run(num_workers = None):
     while True:
 
         # We need to chunk result query sinse raw ad is so big
-        raw_ads = DBSession.query(RawAd.id).filter(RawAd.id > last_id).order_by(RawAd.id).limit(max_size).all()
+        raw_ads = DBSession.query(RawAd.id).filter(RawAd.id > last_id, RawAd.status == "P").order_by(RawAd.id).limit(max_size).all()
 
         # If no more RawAds it breks loop
         if not raw_ads:
