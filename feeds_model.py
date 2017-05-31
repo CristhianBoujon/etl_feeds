@@ -1,5 +1,5 @@
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import Column, Integer, String, Float, TIMESTAMP, Unicode, UnicodeText, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, TIMESTAMP, Unicode, UnicodeText, ForeignKey, Boolean
 from sqlalchemy.orm import sessionmaker, reconstructor, relationship
 from sqlalchemy.orm.session import object_session
 from sqlalchemy.ext.associationproxy import association_proxy
@@ -17,8 +17,6 @@ class FeedType(Base):
 
     mapping = relationship("FeedTypeMapping", lazy = 'dynamic')
     additional_params = relationship("Param", lazy = 'dynamic')
-
-    feed_in_list = relationship("FeedIn", back_populates = "feed_type")
 
     @reconstructor
     def on_load(self):
@@ -46,10 +44,14 @@ class FeedIn(Base):
     id = Column("feedid", Integer, primary_key = True)
     url = Column("feedurl", String)
     name  = Column("feedname", String)
-    country_id  = Column("countryid", Integer)
-    feed_type_id = Column(String, ForeignKey("fp_feed_types.id"))
+    country_id = Column("countryid", Integer)
+    partner_code = Column("feedsiteid", String)
+    reliable = Column(Boolean)
 
-    feed_type = relationship("FeedType", back_populates = "feed_in_list")
+
+    
+    feed_type_id = Column(String, ForeignKey("fp_feed_types.id"))
+    feed_type = relationship("FeedType")
 
     def bulk_insert(self, file):
         """ Bulk insert from a file """
@@ -84,7 +86,7 @@ class FeedIn(Base):
 
                 ######################## Begin - Filter section ################################
                 # @TODO: Filters should be dinamic. E.g: implement some kind of observer pattern
-                record_id = str(self.id) + self.feed_type.ad_mapper.exec_method("ID", raw_content)["site_id"]
+                record_id = str(self.id) + self.feed_type.ad_mapper.exec_method("ID", raw_content)["_id_in_feed"]
                 ad_exists = DBSession.execute("SELECT 1 FROM fp_feeds_in_records WHERE id = :id", {"id": record_id}).first()
                 ######################## End - Filter section ################################
                 if ad_exists:
@@ -207,8 +209,15 @@ class TempAd(Base):
 
     __tablename__ = 'fp_temp_ads'
 
-    id = Column(Integer, primary_key=True)
-    
+    id = Column(Integer, primary_key = True)
+    ad_id = Column(String)
+    error_message = Column(String)
+
+    # FeedIn reference
+    feed_in_id = Column(Integer, ForeignKey("xzclf_feeds_in.feedid"))
+    feed_in = relationship("FeedIn")
+
+
     # FeedInLocation reference
     feed_in_location_id = Column(Integer, ForeignKey("fp_feeds_in_location.id"))
     feed_in_location = relationship("FeedInLocation", back_populates = "temp_ads")
@@ -236,7 +245,7 @@ class TempAd(Base):
 
     @classmethod
     def with_characteristic(self, name, value):
-        return self.properties.any(name = key, value = value)
+        return self.properties.any(name = name, value = value)
 
 
 class RawAd(Base):

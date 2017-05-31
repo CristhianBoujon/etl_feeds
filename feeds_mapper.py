@@ -45,7 +45,7 @@ class TitleMapMethod(MapMethod):
 
 class UrlMapMethod(MapMethod):
     def map(self, *args, **kwargs):
-        return {'url': args[0]}
+        return {'link': args[0]}
 
 class LocationMapMethod(MapMethod):
     def map(self, *args, **kwargs):
@@ -127,8 +127,9 @@ class CurrencyMapMethod(MapMethod):
         return {"currency": args[0]}
 
 class IdMapMethod(MapMethod):
+    """ Return the id found into the feed """
     def map(self, *args, **kwargs):
-        return {"site_id": args[0]}
+        return {"_id_in_feed": args[0]}
 
 class DateMapMethod(MapMethod):
     def __init__(self, **kwargs):

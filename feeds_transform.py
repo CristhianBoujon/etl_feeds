@@ -42,7 +42,8 @@ def create_temp_ad(raw_ad_ids):
             bulk_temp_ads.append({
                 "id": temp_ad.id, 
                 "feed_in_location_id": temp_ad.feed_in_location_id, 
-                "feed_in_subcat_id": temp_ad.feed_in_subcat_id 
+                "feed_in_subcat_id": temp_ad.feed_in_subcat_id,
+                "feed_in_id": raw_ad.feed_in_id 
 
                 })
 
@@ -69,7 +70,7 @@ def run(num_workers = None):
     chunk_size = 1000
     processed = 0
 
-    total_to_be_process = DBSession.query(RawAd).count()
+    total_to_be_process = DBSession.query(RawAd).filter(RawAd.status == "P").count()
 
     total_time = 0
 
