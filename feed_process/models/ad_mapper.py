@@ -2,10 +2,12 @@ from lxml import etree
 from sqlalchemy.orm.exc import NoResultFound, MultipleResultsFound
 from sqlalchemy.orm.session import object_session
 from sqlalchemy.sql.expression import func
-from tools.cleaner import slugify, clear_file
-from db import DBSession, Session
-from feeds_model import *
+from feed_process.tools.cleaner import slugify, clear_file
+from feed_process.models.db import DBSession, Session
+from feed_process.models.model import *
+from feed_process.translation import Translator
 from datetime import datetime as dtt
+from string import Formatter
 import os
 import re
 
@@ -31,9 +33,30 @@ class MapMethod:
         raise NotImplementedError("La función map() no está implementada para " + type(self).__name__)
 
 class DescriptionMapMethod(MapMethod):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.formatter = Formatter()
+        self.translator = Translator()
+
     def map(self, *args, **kwargs):
         try:
-            return {"addesc": self.additional_args["template"].format(*args)}
+            template = self.additional_args["template"]
+            locale = kwargs["raw_ad"].feed_in.locale
+
+            # We take all keywords (no positional) and we translate them and then we create a dict
+            # eg: 
+            #     template = "That is an example {SALARY}: $ {0} in {COMPANY}: {1}"
+            #     locale = "es_ar"
+            #     translated_words = {"SALARY": "Salario", "COMPANY": "Compañía"}
+            # 
+            translated_words = {
+                parse[1]: self.translator.translate(locale, parse[1], "addesc_label") 
+                for parse in self.formatter.parse(template) if type(parse[1]) == str and not parse[1].isdigit()
+            }
+
+            addesc = self.formatter.format(template, *args, **translated_words)
+
+            return {"addesc": addesc}
         except KeyError:
             type_id = kwargs["raw_ad"].feed_in.feed_type.id if kwargs.get("raw_ad", None) else ""
             msg = "El parámetro 'template' no se encuentra definido para " + type_id
@@ -76,6 +99,7 @@ class LocationMapMethod(MapMethod):
         return {
             "cityid": feed_in_location.state_id, 
             "area": feed_in_location.location_name,
+            "location_id": feed_in_location.location_id,
             "_feed_in_location_id": feed_in_location.id # If feed_in_location is pending yet we return the FeedInLocation instance 
                                                         # sinse we will update ad later when moderator fill the location data 
         }

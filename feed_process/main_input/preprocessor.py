@@ -1,5 +1,5 @@
 import os
-from tools import compression
+from feed_process.tools import compression
 
 def preprocess(feed_source, callback, args = None):
     if(compression.is_compressed(feed_source)):

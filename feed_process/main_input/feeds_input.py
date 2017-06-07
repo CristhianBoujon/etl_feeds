@@ -1,26 +1,17 @@
-from feeds_downloader import download_file
-from feeds_preprocessor import preprocess
-from multiprocessing import Pool, cpu_count, current_process
-from tools import cleaner
+from feed_process import LOG_FOLDER, DONWLOAD_FOLDER
+from feed_process.main_input.downloader import download_file
+from feed_process.main_input.preprocessor import preprocess
+from multiprocessing import Pool, cpu_count
+from feed_process.tools import cleaner
 import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import scoped_session, sessionmaker
-from feeds_model import *
-from db import DBSession
+from feed_process.models import *
+from feed_process.models.db import DBSession
 import logging
 import datetime as dtt
 
 
-# start - logging configuration
-# @TODO: Maybe logging in this way it is an error sinse 
-# https://docs.python.org/3.5/howto/logging-cookbook.html#logging-to-a-single-file-from-multiple-processes
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-log_formatter = logging.Formatter('[%(asctime)s] %(message)s')
-logger_handler = logging.FileHandler("logs/{0}_feeds_input.log".format(dtt.datetime.today().strftime("%Y-%m-%d")))
-logger_handler.setFormatter(log_formatter)
-logger.addHandler(logger_handler)
-# end - logging configuration
 
 def process_feed(_url, download_folder):
 
@@ -55,11 +46,26 @@ def process_feed(_url, download_folder):
 
 
 
-def run(download_folder, urls, num_workers = None):
+def run(urls, num_workers = None):
+    log_file_name = os.path.join(
+        LOG_FOLDER, 
+        "{0}_feeds_input.log".format(dtt.datetime.today().strftime("%Y-%m-%d")))
+
+    # start - logging configuration
+    # @TODO: Maybe logging in this way it is an error sinse 
+    # https://docs.python.org/3.5/howto/logging-cookbook.html#logging-to-a-single-file-from-multiple-processes
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    log_formatter = logging.Formatter('[%(asctime)s] %(message)s')
+    logger_handler = logging.FileHandler(log_file_name)
+    logger_handler.setFormatter(log_formatter)
+    logger.addHandler(logger_handler)
+    # end - logging configuration
+
 
     with Pool(processes = num_workers) as pool:
         #results = pool.map_async(process_feed, range(5)).get()
-        responses = [pool.apply_async(process_feed, (url, download_folder)) for url in urls]
+        responses = [pool.apply_async(process_feed, (url, DONWLOAD_FOLDER)) for url in urls]
 
         for response in responses:
             response.get()

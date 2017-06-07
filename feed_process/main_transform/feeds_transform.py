@@ -1,23 +1,11 @@
-from multiprocessing import Pool, cpu_count
-from feeds_model import *
-from db import DBSession
-from tools import chunk_list
+from multiprocessing import Pool
+from feed_process.models import *
+from feed_process.models.db import DBSession
+from feed_process.tools import chunk_list
 import os
 import logging
 import datetime as dtt
-
-
-# start - logging configuration
-# @TODO: Maybe logging in this way it is an error sinse 
-# https://docs.python.org/3.5/howto/logging-cookbook.html#logging-to-a-single-file-from-multiple-processes
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-log_formatter = logging.Formatter('[%(asctime)s] %(message)s')
-logger_handler = logging.FileHandler("logs/{0}_feeds_transform.log".format(dtt.datetime.today().strftime("%Y-%m-%d")))
-logger_handler.setFormatter(log_formatter)
-logger.addHandler(logger_handler)
-# end - logging configuration
-
+from feed_process import LOG_FOLDER
 
 def create_temp_ad(raw_ad_ids):
     session = DBSession()
@@ -62,12 +50,27 @@ def create_temp_ad(raw_ad_ids):
 
     return processed
 
-def run(num_workers = None):
+def run(num_workers = None, max_size = 10000, chunk_size = 1000):
+    
+    log_file_name = os.path.join(
+        LOG_FOLDER, 
+        "{0}_feeds_transform.log".format(dtt.datetime.today().strftime("%Y-%m-%d")))
+
+    # start - logging configuration
+    # @TODO: Maybe logging in this way it is an error sinse 
+    # https://docs.python.org/3.5/howto/logging-cookbook.html#logging-to-a-single-file-from-multiple-processes
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    log_formatter = logging.Formatter('[%(asctime)s] %(message)s')
+    logger_handler = logging.FileHandler(log_file_name)
+    logger_handler.setFormatter(log_formatter)
+    logger.addHandler(logger_handler)
+    # end - logging configuration
+
+
     pool = Pool(processes = num_workers)
     raw_ads = []
     last_id = 0
-    max_size = 10000
-    chunk_size = 1000
     processed = 0
 
     total_to_be_process = DBSession.query(RawAd).filter(RawAd.status == "P").count()
@@ -78,7 +81,11 @@ def run(num_workers = None):
     while True:
 
         # We need to chunk result query sinse raw ad is so big
-        raw_ads = DBSession.query(RawAd.id).filter(RawAd.id > last_id, RawAd.status == "P").order_by(RawAd.id).limit(max_size).all()
+        raw_ads = DBSession.query(RawAd.id).\
+            filter(RawAd.id > last_id, RawAd.status == "P").\
+            order_by(RawAd.id).\
+            limit(max_size).\
+            all()
 
         # If no more RawAds it breks loop
         if not raw_ads:

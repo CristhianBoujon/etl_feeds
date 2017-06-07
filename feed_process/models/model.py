@@ -1,11 +1,10 @@
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import Column, Integer, String, Float, TIMESTAMP, Unicode, UnicodeText, ForeignKey, Boolean
-from sqlalchemy.orm import sessionmaker, reconstructor, relationship
-from sqlalchemy.orm.session import object_session
-from sqlalchemy.ext.associationproxy import association_proxy
+from sqlalchemy.orm import reconstructor, relationship
 from sqlalchemy.orm.collections import attribute_mapped_collection
-from db import DBSession
+from feed_process.models.db import DBSession
 from datetime import datetime as dtt
+import importlib
 
 Base = declarative_base()
 
@@ -24,11 +23,9 @@ class FeedType(Base):
         self.__init__()
 
     def __init__(self):
-        self.ad_mapper = getattr(__import__("feeds_mapper"), self.ad_mapper_name)(self)
-
-
-    def bulk_insert(self, file, feed_in):
-        return self.ad_mapper.bulk_insert(file, feed_in)
+        self.ad_mapper = getattr(
+            importlib.__import__("feed_process.models.ad_mapper", fromlist = [self.ad_mapper_name]), 
+            self.ad_mapper_name)(self)
 
     def map_ad(self, raw_content):
         return self.ad_mapper.map(raw_content)
@@ -47,8 +44,7 @@ class FeedIn(Base):
     country_id = Column("countryid", Integer)
     partner_code = Column("feedsiteid", String)
     reliable = Column(Boolean)
-
-
+    locale = Column("language", String)
     
     feed_type_id = Column(String, ForeignKey("fp_feed_types.id"))
     feed_type = relationship("FeedType")
