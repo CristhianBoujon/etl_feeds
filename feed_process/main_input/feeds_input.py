@@ -1,4 +1,4 @@
-from feed_process import LOG_FOLDER, DONWLOAD_FOLDER
+from feed_process import LOG_FOLDER, DOWNLOAD_FOLDER
 from feed_process.main_input.downloader import download_file
 from feed_process.main_input.preprocessor import preprocess
 from multiprocessing import Pool, cpu_count
@@ -65,7 +65,7 @@ def run(urls, num_workers = None):
 
     with Pool(processes = num_workers) as pool:
         #results = pool.map_async(process_feed, range(5)).get()
-        responses = [pool.apply_async(process_feed, (url, DONWLOAD_FOLDER)) for url in urls]
+        responses = [pool.apply_async(process_feed, (url, DOWNLOAD_FOLDER)) for url in urls]
 
         for response in responses:
             response.get()

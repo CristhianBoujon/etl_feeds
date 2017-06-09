@@ -103,7 +103,7 @@ def run(loader_name, sleep_time = 0):
     processed_temp_ads = []
     
     total = query.order_by(func.rand()).count()
-    limit = 1000
+    limit = 100
     temp_ads = query.order_by(func.rand()).limit(limit).all()
 
     while True:
@@ -118,8 +118,12 @@ def run(loader_name, sleep_time = 0):
         errors = 0
 
         for temp_ad in temp_ads:
-            ad_data = prepare_ad_data(loader, temp_ad)
-            ads_data.append(ad_data)
+            try:
+                ad_data = prepare_ad_data(loader, temp_ad)                
+                ads_data.append(ad_data)
+            except Exception as e:
+                temp_ad.error_message = "Error while it is preparing data to send: " + str(e) 
+                pass
 
         # It loads the ads 
         result = loader.load(ads_data)

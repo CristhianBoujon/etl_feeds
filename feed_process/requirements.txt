@@ -2,3 +2,5 @@ pymysql
 rarfile
 python-slugify
 requests
+sqlalchemy
+lxml

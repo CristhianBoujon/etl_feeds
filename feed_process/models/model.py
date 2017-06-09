@@ -32,11 +32,11 @@ class FeedType(Base):
 
 class FeedIn(Base):
     """ 
-    Object that maps table xzclf_feeds_in 
+    Object that maps table fp_feeds_in 
     It represents some feed source
     """
 
-    __tablename__ = "xzclf_feeds_in"
+    __tablename__ = "fp_feeds_in"
 
     id = Column("feedid", Integer, primary_key = True)
     url = Column("feedurl", String)
@@ -210,7 +210,7 @@ class TempAd(Base):
     error_message = Column(String)
 
     # FeedIn reference
-    feed_in_id = Column(Integer, ForeignKey("xzclf_feeds_in.feedid"))
+    feed_in_id = Column(Integer, ForeignKey("fp_feeds_in.feedid"))
     feed_in = relationship("FeedIn")
 
 
@@ -249,7 +249,7 @@ class RawAd(Base):
 
     id = Column(Integer, primary_key = True)
     raw_content = Column("raw_ad", String)
-    feed_in_id = Column(Integer, ForeignKey("xzclf_feeds_in.feedid"))
+    feed_in_id = Column(Integer, ForeignKey("fp_feeds_in.feedid"))
 
     status = Column(String)
 
