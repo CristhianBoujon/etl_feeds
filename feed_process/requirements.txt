@@ -3,4 +3,4 @@ rarfile
 python-slugify
 requests
 sqlalchemy
-lxml
+lxml==3.5.0

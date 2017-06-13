@@ -1,4 +1,0 @@
-pymysql
-rarfile
-python-slugify
-requests
