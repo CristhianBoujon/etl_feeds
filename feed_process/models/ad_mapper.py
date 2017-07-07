@@ -75,13 +75,15 @@ class LocationMapMethod(MapMethod):
 
         slug_location_name = ",".join([slugify(arg, separator = "-") for arg in args if arg])
         session = Session()
-        query = session.query(FeedInLocation).filter_by(slug_location_name = slug_location_name)
+        country_id = kwargs["raw_ad"].feed_in.country_id if kwargs.get("raw_ad", None) else 0
+        
+        query = session.query(FeedInLocation).filter_by(slug_location_name = slug_location_name, country_id = country_id)
         
         try:
             feed_in_location = query.one()
             result = self.__result(feed_in_location)
         except NoResultFound:
-            country_id = kwargs["raw_ad"].feed_in.country_id if kwargs.get("raw_ad", None) else 0
+
             feed_in_location = FeedInLocation(slug_location_name = slug_location_name, country_id = country_id)
             session.add(feed_in_location)
             session.commit()
@@ -108,13 +110,19 @@ class SubCategoryMapMethod(MapMethod):
     def map(self, *args, **kwargs):
         slug_subcat_name = ",".join([slugify(arg) for arg in args if arg])
         session = Session()
-        query = session.query(FeedInSubcategory).filter_by(slug_subcat_name = slug_subcat_name)
+        query = session.query(FeedInSubcategory).\
+                    filter_by(  slug_subcat_name = slug_subcat_name, 
+                                catid = kwargs["raw_ad"].feed_in.catid)
         
         try:
             feed_in_subcat = query.one()
             result = self.__result(feed_in_subcat)
         except NoResultFound:
-            feed_in_subcat = FeedInSubcategory(slug_subcat_name = slug_subcat_name)
+            
+            feed_in_subcat = FeedInSubcategory(
+                slug_subcat_name = slug_subcat_name, 
+                catid = kwargs["raw_ad"].feed_in.catid)
+            
             session.add(feed_in_subcat)
             session.commit()
             result = self.__result(feed_in_subcat)
@@ -159,7 +167,8 @@ class DateMapMethod(MapMethod):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # we create a regex patter in order to match time sinse sometimes dates contains time data
-        self.time_regex = re.compile('(\d{2}:\d{2}:\d{2})')
+        # time_regex matchs hours:minutes and hours:minutes:seconds
+        self.time_regex = re.compile('(\d{2}:\d{2}(:\d{2})*)')
 
     def map(self, *args, **kwargs):
         # Date or datetime as string type
@@ -168,10 +177,17 @@ class DateMapMethod(MapMethod):
         # if it contains time, we remove it
         str_input_date = self.time_regex.sub('', str_input_date).strip() 
 
-        date = dtt.strptime(str_input_date, self.additional_args["input_format"]).date()
+        date = dtt.strptime(str_input_date, kwargs["raw_ad"].feed_in.format_date).date()
         str_output_date = date.strftime(self.additional_args["output_format"])
 
         return {"date": str_output_date, "_format": self.additional_args["output_format"]}
+
+class ImageMapMethod(MapMethod):
+    def map(self, *args, **kwargs):
+        if type(args[0]) == str and args[0]:
+            return {"_images": [args[0]]}
+                
+        return {"_images": args[0]}
 
 MAP_METHODS = {
     'DESCRIPCION': DescriptionMapMethod,
@@ -182,7 +198,8 @@ MAP_METHODS = {
     'TITULO': TitleMapMethod,
     'UBICACION': LocationMapMethod,
     'URL': UrlMapMethod,
-    'FECHA': DateMapMethod
+    'FECHA': DateMapMethod,
+    'IMAGEN': ImageMapMethod
 }
 
 class AdMapper:
@@ -222,7 +239,7 @@ class XmlAdMapper(AdMapper):
         """ Returns a string with a ad information in xml format """
 
         """
-            How does it works?
+            How does it work?
             Function iterate over each element next(self.__xml_parser). If a XML syntax error was found
             it will raise a XMLSyntaxError exception. If the file was not cleaned yet (self.__file_was_cleaned is False)
             we will try clean it/fix it calling clear_file().
@@ -295,22 +312,24 @@ class XmlAdMapper(AdMapper):
 
         return temp_ad
 
-    def exec_method(self, method_name, raw_content):
+    def exec_method(self, method_name, raw_ad):
         if not self.map_methods:
             self.__load_map_methods()
 
-        xml = etree.fromstring(raw_content)
+        xml = etree.fromstring(raw_ad.raw_content)
         map_method = self.map_methods[method_name][0]
         xpaths = self.map_methods[method_name][1]
 
         args = [self.extract(xml, xpath) for xpath in xpaths]
         
-        return map_method.map(*args)
+        return map_method.map(*args, raw_ad = raw_ad)
 
     def extract(self, xml, xpath):
         """ Extract data from xml based on it xpath """
-        try:
-            data = xml.xpath(xpath)[0].strip()
-        except: # If xpath doesn't match elements
+        data = xml.xpath(xpath)
+        if len(data) == 1:
+            data = data[0].strip()
+        elif len(data) == 0:
             data = ""
+        
         return data

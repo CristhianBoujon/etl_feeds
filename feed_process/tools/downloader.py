@@ -9,16 +9,13 @@ from urllib.request import urlopen
 import requests
 import os
 
-def download_file(url, path = ".", file_name = '*', length = 16*1024):
-
-    file_name, ext = file_name.split('*')
+def download_file(url, path = ".", file_name = None, ext = None, length = 16*1024, timeout = None):
 
     # If file name is not provided it will be generated automatically
-    if(not file_name):
-        file_name = generate_file_name(url, suffix = dtt.datetime.fromtimestamp(time.time()).strftime('%Y%m%d%H%M%S%f'))
+    file_name = file_name or generate_file_name(url, suffix = dtt.datetime.fromtimestamp(time.time()).strftime('%Y%m%d%H%M%S%f'))
 
     if ("http://" in url) or (("https://" in url)):
-        response = requests.get(url, stream = True)
+        response = requests.get(url, stream = True, timeout = timeout)
 
         response.raise_for_status() # Raise an exception if status code is not 200
 

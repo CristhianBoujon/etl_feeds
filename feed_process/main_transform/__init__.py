@@ -1,1 +1,1 @@
-from feed_process.main_transform.feeds_transform import run
+from feed_process.main_transform.feeds_transform import run, run_img

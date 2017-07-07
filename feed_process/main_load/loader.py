@@ -1,5 +1,6 @@
 import requests
 import time
+from multiprocessing import Pool, cpu_count
 
 class Loader:
     def load(self, data):
@@ -28,9 +29,9 @@ class AnunicoApiLoader(ApiLoader):
         self.__country_cache = {}
         self.__subcategory_cache = {}
 
-    def load(self, ads_data):
+    def batch_load(self, ads_data):
         data = {"ads": ads_data}
-        response = requests.post(self.url + "ad-from-fp", json = data)
+        response = requests.post(self.url + "batch-ad-from-fp", json = data)
 
         if(response.ok):
             response = response.json()
@@ -45,6 +46,30 @@ class AnunicoApiLoader(ApiLoader):
                 "id": ad_data["sitioId"], 
                 "ad_id": None, 
                 "error_message": error_message } for ad_data in ads_data]
+
+
+    def _load(self, serialized_ad):
+        response = requests.post(self.url + "ad-from-fp", 
+                data = serialized_ad["data"],
+                files = [("img_" + str(i), open(serialized_ad["images"][i], "rb")) for i in range(len(serialized_ad["images"]))])
+
+        if(response.ok):
+            resp_ad = response.json()
+            return {
+                    "id": resp_ad["sitioId"], 
+                    "ad_id": (resp_ad["adid"] or None), 
+                    "error_message": (resp_ad["errorMessage"] or None) }
+        else:
+            error_message = "ERROR {0} {1}".format(str(response.status_code), str(response.content))
+            return {
+                    "id": serialized_ad["data"]["sitioId"], 
+                    "ad_id": None, 
+                    "error_message": error_message }
+
+    def load(self, serialized_ads):
+        pool = Pool(cpu_count() * 2)
+        return pool.map(self._load, serialized_ads)
+
 
     def get_location(self, location_id):
         

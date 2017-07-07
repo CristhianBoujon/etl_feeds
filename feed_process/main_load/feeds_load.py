@@ -20,16 +20,19 @@ def create_loader(loader_name):
             loader_name)(**loader_data_connection)
 
 def prepare_ad_data(loader, temp_ad):
-    ad_data = {prop_name: prop.value for prop_name, prop in temp_ad.properties.items()} 
-    ad_data["sitioId"] = temp_ad.id
-    ad_data["sitio"] = temp_ad.feed_in.partner_code
-    ad_data["canonicalUrl"] = set_canonical_url(loader, temp_ad)
+    ad_data = {}
+    ad_data["data"] = {prop_name: prop.value for prop_name, prop in temp_ad.properties.items()} 
+    ad_data["data"]["sitioId"] = temp_ad.id
+    ad_data["data"]["sitio"] = temp_ad.feed_in.partner_code
+    ad_data["data"]["canonicalUrl"] = set_canonical_url(loader, temp_ad)
 
     # If feed is reliable then moderated = 0 and enabled = 1 and verfied = 1
     # Else moderated = 1 and enabled = 0 and verified = 0
-    ad_data["moderated"] = int(not temp_ad.feed_in.reliable)
-    ad_data["enabled"] = int(temp_ad.feed_in.reliable)
-    ad_data["verified"] = int(temp_ad.feed_in.reliable)        
+    ad_data["data"]["moderated"] = int(not temp_ad.feed_in.reliable)
+    ad_data["data"]["enabled"] = int(temp_ad.feed_in.reliable)
+    ad_data["data"]["verified"] = int(temp_ad.feed_in.reliable)        
+
+    ad_data["images"] = [image.internal_path for image in temp_ad.images]
 
     return ad_data
 
@@ -84,45 +87,37 @@ def run(loader_name, sleep_time = 0):
     logger.addHandler(logger_handler)
     # end - logging configuration
 
-    sub_query = DBSession.query(TempAd.id).\
-                join(TempAd.properties).\
-                filter( TempAdProperty.name == "cityid", 
-                        TempAdProperty.value != None,
-                        TempAd.ad_id == None)
-
-    query = DBSession.query(TempAd).\
-                join(TempAd.properties).\
-                filter( TempAdProperty.name == "subcatid", 
-                        TempAdProperty.value != None,
-                        TempAdProperty.value != "0",
-                        TempAd.ad_id == None).\
-                filter(TempAd.id.in_(sub_query))
-
     loader = create_loader(loader_name)
     
     processed_temp_ads = []
-    
-    total = query.order_by(func.rand()).count()
-    limit = 100
-    temp_ads = query.order_by(func.rand()).limit(limit).all()
+    errors = 0
+    loaded_ok = 0
 
+    limit = 100
+    
+    query = DBSession.query(TempAd).filter(TempAd.is_ready, TempAd.ad_id == None)
+    temp_ads = query.order_by(func.rand()).limit(limit).all()
+    
     while True:
 
-        temp_ads_count = len(temp_ads)
         processed_temp_ads += [temp_ad.id for temp_ad in temp_ads]
 
         if not temp_ads:
+            logger.info("FINISHED. ads loaded OK: {0}. Errors: {1}".format(loaded_ok, errors))
             break
 
         ads_data = []
-        errors = 0
+
 
         for temp_ad in temp_ads:
             try:
-                ad_data = prepare_ad_data(loader, temp_ad)                
+                ad_data = prepare_ad_data(loader, temp_ad)
                 ads_data.append(ad_data)
             except Exception as e:
-                temp_ad.error_message = "Error while it is preparing data to send: " + str(e) 
+                temp_ad.error_message = "Error while it is preparing data to load: " + str(e)
+                logger.info("{0} {1} {2}".format(temp_ad.id, temp_ad.ad_id, temp_ad.error_message or ""))
+                errors += 1
+
                 pass
 
         # It loads the ads 
@@ -133,9 +128,13 @@ def run(loader_name, sleep_time = 0):
             temp_ad.ad_id = res["ad_id"]
             temp_ad.error_message = res["error_message"]
 
-            errors += 1 if temp_ad.error_message else 0
+            if res["error_message"]:
+                errors += 1
+            else:
+                loaded_ok += 1 
 
-        logger.info("{0}/{3} {1} {2}".format(len(processed_temp_ads), temp_ads_count - errors, errors, total))
+            logger.info("{0} {1} {2}".format(temp_ad.id, temp_ad.ad_id, temp_ad.error_message or ""))
+
         DBSession.commit()
 
         temp_ads = query.filter(~ TempAd.id.in_(processed_temp_ads)).\
@@ -145,5 +144,4 @@ def run(loader_name, sleep_time = 0):
 
         # Process sleeps in order to avoid overload API's server.
         time.sleep(sleep_time)
-
 
