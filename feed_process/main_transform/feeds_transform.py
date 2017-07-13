@@ -1,8 +1,9 @@
 from feed_process.models import *
 from feed_process.models.db import DBSession
-from feed_process.tools import chunk_list
+from feed_process.tools import chunk_list, id_generator
 from feed_process.tools.downloader import download_file
 from feed_process import LOG_FOLDER, DOWNLOAD_FOLDER
+from feed_process.tools.cleaner import REGEX_IMAGE_EXTENSION
 import os
 import logging
 import datetime as dtt
@@ -119,9 +120,12 @@ def run(num_workers = None, max_size = 10000, chunk_size = 1000):
 
 
 
-def _download(url, extension):
-    try:
-        return download_file(url, path = DOWNLOAD_FOLDER, ext = extension, timeout = 10)
+def _download(url):
+    match_image_extension = REGEX_IMAGE_EXTENSION.search(url)
+    extension = match_image_extension.group(0) if match_image_extension else ".jpg"
+
+    try:        
+        return download_file(url, path = DOWNLOAD_FOLDER, file_name = id_generator(20), ext = extension, timeout = 10)        
     except:
         return None
 
@@ -150,10 +154,9 @@ def run_img(tempids = None, num_workers = None, images_by_loop = 1000):
             
         last_id = images[-1].id
         
-        arguments = [(image.external_path, os.path.splitext(image.external_path)[1]) 
-            for image in images]
+        arguments = [image.external_path for image in images]
         
-        for image, path in zip(images, pool.starmap(_download, arguments)):
+        for image, path in zip(images, pool.map(_download, arguments)):
             image.internal_path = path
 
         DBSession.commit()

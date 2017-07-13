@@ -67,8 +67,8 @@ class AnunicoApiLoader(ApiLoader):
                     "error_message": error_message }
 
     def load(self, serialized_ads):
-        pool = Pool(cpu_count() * 2)
-        return pool.map(self._load, serialized_ads)
+        with Pool(cpu_count() * 2) as pool: 
+            return pool.map(self._load, serialized_ads)
 
 
     def get_location(self, location_id):

@@ -259,15 +259,6 @@ class TempAd(Base):
     def images(self, images):
         self.__images = [TempAdImage(image_url) for image_url in images][:6]
 
-    """@hybrid_property
-                def is_ready(self):
-                    # Check if all images were downloaded. If ad has not images that will be True
-                    images_done = True #self.__images.count() == self.images.filter(TempAdImage.internal_path != None).count
-                    has_area = self.properties["area"].value != None
-                    has_subcat = self.properties["subcatid"].value not in (None, "0")
-            
-                    return images_done and has_area and has_subcat"""
-
     @hybrid_property
     def is_ready(self):
         has_cityid = bool(self.properties["cityid"].value)
@@ -283,19 +274,21 @@ class TempAd(Base):
         has_cityid = select([TempAdProperty.value]).\
                         where(and_(
                                     TempAdProperty.name == "cityid", 
-                                    TempAdProperty.name != None,
+                                    TempAdProperty.value != None,
+                                    TempAdProperty.value != "0",
                                     TempAdProperty.temp_ad_id == cls.id)).as_scalar() != None 
 
         has_area = select([TempAdProperty.value]).\
                         where(and_(
                                     TempAdProperty.name == "area", 
-                                    TempAdProperty.name != None,
+                                    TempAdProperty.value != None,
                                     TempAdProperty.temp_ad_id == cls.id)).as_scalar() != None
 
         has_subcatid = select([TempAdProperty.value]).\
                         where(and_(
                                     TempAdProperty.name == "subcatid", 
-                                    TempAdProperty.name != None,
+                                    TempAdProperty.value != None,
+                                    TempAdProperty.value != "0",
                                     TempAdProperty.temp_ad_id == cls.id)).as_scalar() != None
         
         # Amount of downloaded images (where internal_path IS NOT NULL) must be equal to amount of ads's images

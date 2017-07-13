@@ -3,6 +3,8 @@ import re
 import fileinput
 import slugify as slug
 
+REGEX_IMAGE_EXTENSION = re.compile("(.jpg)|(.jpeg)|(.png)|(.bmp)|(.png)|(.gif)", re.IGNORECASE)
+
 def slugify(string, separator = "-"):
     return slug.slugify(string, separator = separator)
 
