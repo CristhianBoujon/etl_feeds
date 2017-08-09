@@ -9,6 +9,7 @@ from datetime import date
 import importlib
 from sqlalchemy.sql.expression import select, exists, and_, all_
 from sqlalchemy import func
+from urllib.parse import urlparse
 
 Base = declarative_base()
 
@@ -52,7 +53,8 @@ class FeedIn(Base):
     last_processed_date = Column(Date)
     enabled = Column(String)
     __format_date = Column("format_date", String)
-    catid = Column(Integer)
+    category_id = Column("catid", Integer)
+    ext = Column("feedext", String)
 
     feed_type_id = Column(String, ForeignKey("fp_feed_types.id"))
     feed_type = relationship("FeedType")
@@ -97,7 +99,8 @@ class FeedIn(Base):
 
                 ######################## Begin - Filter section ################################
                 # @TODO: Filters should be dinamic. E.g: implement some kind of observer pattern
-                record_id = str(self.id) + self.feed_type.ad_mapper.exec_method("ID", raw_ad = raw_ad)["_id_in_feed"]
+                id = self.feed_type.ad_mapper.exec_method("ID", raw_ad = raw_ad)["_id_in_feed"]
+                record_id = id + "," + self.feed_type.ad_mapper.exec_method("URL", raw_ad = raw_ad)["link"]
                 ad_exists = DBSession.execute("SELECT 1 FROM fp_feeds_in_records WHERE id = :id", {"id": record_id}).first()
                 ######################## End - Filter section ################################
                 if ad_exists:
@@ -161,6 +164,7 @@ class FeedTypeMapping(Base):
     field = Column(String)
     method = Column(String)
     param_order = Column(Integer)
+    default_value = Column(String)
 
     # Mapping relationship feed_type_mapping -> feed_type
     feed_type_id = Column(String, ForeignKey("fp_feed_types.id"))
@@ -203,7 +207,7 @@ class TempAdProperty(Base):
 
     __tablename__ = 'fp_temp_ad_properties'
     
-    temp_ad_id = Column(ForeignKey('fp_temp_ads.id'), primary_key = True)
+    temp_ad_id = Column(ForeignKey('fp_temp_ads.id', ondelete='CASCADE'), primary_key = True)
     name = Column(Unicode(64), primary_key = True)
     value = Column(UnicodeText)
 
@@ -213,32 +217,30 @@ class TempAdProperty(Base):
 
 class TempAd(Base):
     """ Temporal ad """
-
     __tablename__ = 'fp_temp_ads'
-
     id = Column(Integer, primary_key = True)
     ad_id = Column(String)
     error_message = Column(String)
+    created_at = Column(Date)
+    updated_at = Column(Date)
 
     # FeedIn reference
     feed_in_id = Column(Integer, ForeignKey("fp_feeds_in.feedid"))
     feed_in = relationship("FeedIn")
-
-
+    
     # FeedInLocation reference
     feed_in_location_id = Column(Integer, ForeignKey("fp_feeds_in_location.id"))
     feed_in_location = relationship("FeedInLocation", back_populates = "temp_ads")
-
+    
     # FeedInSubcategory reference
     feed_in_subcat_id = Column(Integer, ForeignKey("fp_feeds_in_subcats.id"))
-    feed_in_subcat = relationship("FeedInSubcategory")
+    feed_in_subcat = relationship("FeedInSubcategory")    
     
     # TempAdProperty represents a specifically data mapped from a RawAd. 
     # E.g: adtitle, addesc, price, etc 
     properties = relationship("TempAdProperty",
-                collection_class = attribute_mapped_collection('name'))
-
-    __images = relationship("TempAdImage", lazy = 'dynamic')
+                collection_class = attribute_mapped_collection('name'), cascade="all, delete-orphan")
+    __images = relationship("TempAdImage", lazy='joined', cascade="all, delete-orphan")
 
 
     def set_properties(self, dict_properties):
@@ -305,11 +307,6 @@ class TempAd(Base):
         
         return cls.id.in_(select([TempAd.id]).where(and_(has_cityid, has_area, has_subcatid, completed_imgs)))
 
-    @classmethod
-    def with_characteristic(self, key, value):
-        #print(self.__images.any(TempAdImage.internal_path != None))
-        #print(select([func.count(TempAdImage.id)]))
-        return select([func.count(TempAdImage.id)]).alias("sarasa")
 
 class RawAd(Base):
     __tablename__ = "fp_raw_ads"
@@ -333,7 +330,7 @@ class TempAdImage(Base):
     __tablename__ = "fp_temp_ad_images"
 
     id = Column(Integer, primary_key = True)
-    temp_ad_id = Column(Integer, ForeignKey("fp_temp_ads.id"))
+    temp_ad_id = Column(Integer, ForeignKey("fp_temp_ads.id", ondelete='CASCADE'))
     external_path = Column(String)
     internal_path = Column(String)
 

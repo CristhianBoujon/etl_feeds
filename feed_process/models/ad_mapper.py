@@ -7,6 +7,7 @@ from feed_process.models.db import DBSession, Session
 from feed_process.models.model import *
 from feed_process.translation import Translator
 from datetime import datetime as dtt
+from datetime import date as dt
 from string import Formatter
 import os
 import re
@@ -112,7 +113,7 @@ class SubCategoryMapMethod(MapMethod):
         session = Session()
         query = session.query(FeedInSubcategory).\
                     filter_by(  slug_subcat_name = slug_subcat_name, 
-                                catid = kwargs["raw_ad"].feed_in.catid)
+                                catid = kwargs["raw_ad"].feed_in.category_id)
         
         try:
             feed_in_subcat = query.one()
@@ -121,7 +122,7 @@ class SubCategoryMapMethod(MapMethod):
             
             feed_in_subcat = FeedInSubcategory(
                 slug_subcat_name = slug_subcat_name, 
-                catid = kwargs["raw_ad"].feed_in.catid)
+                catid = kwargs["raw_ad"].feed_in.category_id)
             
             session.add(feed_in_subcat)
             session.commit()
@@ -167,17 +168,27 @@ class DateMapMethod(MapMethod):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # we create a regex patter in order to match time sinse sometimes dates contains time data
-        # time_regex matchs hours:minutes and hours:minutes:seconds
-        self.time_regex = re.compile('(\d{2}:\d{2}(:\d{2})*)')
+        # time_regex matchs hours:minutes, hours:minutes:seconds and PM/AM
+        self.time_regex = re.compile('(\d{1,2}:\d{1,2}(:\d{1,2})*)( )*(PM|AM)*')
 
     def map(self, *args, **kwargs):
-        # Date or datetime as string type
-        str_input_date = args[0]
 
-        # if it contains time, we remove it
-        str_input_date = self.time_regex.sub('', str_input_date).strip() 
+        # if args[0] is integer it will assume timestamp 
+        if(args[0].isdigit()):
+            date = dt.fromtimestamp(int(args[0]))
+        else:
+            # Date or datetime as string type
+            str_input_date = args[0]
 
-        date = dtt.strptime(str_input_date, kwargs["raw_ad"].feed_in.format_date).date()
+            # if it contains time, we remove it
+            str_input_date = self.time_regex.sub('', str_input_date).strip() 
+
+            date = dtt.strptime(str_input_date, kwargs["raw_ad"].feed_in.format_date).date()
+        
+        # This line was introduced sinse strftime() method was restricted to years >= 1000
+        # it spcified https://docs.python.org/3/library/datetime.html#strftime-strptime-behavior 
+        date = dt(1000, 1, 1) if date.year < 1000 else date
+
         str_output_date = date.strftime(self.additional_args["output_format"])
 
         return {"date": str_output_date, "_format": self.additional_args["output_format"]}
@@ -279,17 +290,18 @@ class XmlAdMapper(AdMapper):
         # Solución: https://www.sitepoint.com/quick-tip-how-to-permanently-change-sql-mode-in-mysql/
         methods = self.db_session.query(
                     FeedTypeMapping.method, 
-                    func.group_concat(FeedTypeMapping.field.op('ORDER BY')(FeedTypeMapping.param_order))
+                    func.group_concat(FeedTypeMapping.field.op('ORDER BY')(FeedTypeMapping.param_order)),
+                    func.group_concat(FeedTypeMapping.default_value.op('ORDER BY')(FeedTypeMapping.param_order))                    
                 ).filter(FeedTypeMapping.feed_type == self.feed_type, FeedTypeMapping.method.in_(MAP_METHODS.keys())).group_by(FeedTypeMapping.method).all()
 
-        for method_name, xpaths in methods:
+        for method_name, xpaths, default_values in methods:
             addional_params = dict([(param.name, param.value) for param in self.feed_type.additional_params.filter_by(method = method_name)])
             
             map_method = MAP_METHODS[method_name](**addional_params)
 
             # With the below line we get
             # {"DESCRIPCION": (DescriptionMapMethod(template = "..."), [content/text(), bathrooms/text()])}
-            self.map_methods[method_name] = (map_method, xpaths.split(","))
+            self.map_methods[method_name] = (map_method, xpaths.split(","), default_values.split(","))
 
         return self
 
@@ -303,8 +315,8 @@ class XmlAdMapper(AdMapper):
         mapped_properties = {}
         temp_ad = TempAd()
         
-        for method_name, (map_method, xpaths) in self.map_methods.items():
-            args = [self.extract(xml, xpath) for xpath in xpaths]
+        for method_name, (map_method, xpaths, default_values) in self.map_methods.items():
+            args = [self.extract(xml, xpath) or default_value for xpath, default_value in zip(xpaths, default_values)]
             
             mapped_properties.update(map_method.map(*args, raw_ad = raw_ad))
 

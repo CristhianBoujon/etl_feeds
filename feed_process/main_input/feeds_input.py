@@ -10,7 +10,7 @@ import logging
 import datetime as dtt
 
 
-def process_feed(feed_id, download_folder):
+def process_feed(feed_id, download_folder, timeout = None):
 
     logger = logging.getLogger(__name__)
     session = DBSession()
@@ -20,7 +20,7 @@ def process_feed(feed_id, download_folder):
     url = feed_in.url
     file_name = ""    
     try:
-        file_name = download_file(url, download_folder, timeout = 10)
+        file_name = download_file(url, download_folder, ext = feed_in.ext or None, timeout = timeout)
         result = preprocess(file_name, feed_in.bulk_insert, ())
         for res in result:
             logger.info("{0} {1} {2} {3} {4} {5} {6}"
@@ -89,7 +89,7 @@ def run(urls = None, feed_ids = None, num_workers = None):
 
         feed_ids = [t_id[0] for t_id in result]
 
-    args_collection = [(feed_id, DOWNLOAD_FOLDER) for feed_id in feed_ids]
+    args_collection = [(feed_id, DOWNLOAD_FOLDER, 20) for feed_id in feed_ids]
     results = pool.map_async(__process_feed, args_collection).get()
 
 
